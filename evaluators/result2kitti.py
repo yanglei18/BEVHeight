@@ -11,8 +11,11 @@ from evaluators.kitti_utils import kitti_common as kitti
 from evaluators.kitti_utils.eval import kitti_eval
 
 from scripts.gen_info_rope3d import *
+from scripts.gen_info_kitti import load_calib_kitti
+
 from scipy.spatial.transform import Rotation as R
 
+category_map_kitti = {"car": "Car", "van": "Car", "truck": "Truck", "bus": "Bus", "pedestrian": "Pedestrian", "bicycle": "Cyclist"}
 category_map_dair = {"car": "Car", "van": "Car", "truck": "Car", "bus": "Car", "pedestrian": "Pedestrian", "bicycle": "Cyclist", "trailer": "Cyclist", "motorcycle": "Cyclist"}
 category_map_rope3d = {"car": "Car", "van": "Car", "truck": "Bus", "bus": "Bus", "pedestrian": "Pedestrian", "bicycle": "Cyclist", "trailer": "Cyclist", "motorcycle": "Cyclist"}
 
@@ -195,7 +198,7 @@ def get_cam_calib_intrinsic(calib_path):
     calib = np.array(cam_K).reshape([3, 3], order="C")
     return calib
     
-def result2kitti(results_file, results_path, dair_root, gt_label_path, demo=False):
+def result2kitti_dair(results_file, results_path, dair_root, gt_label_path, demo=False):
     with open(results_file,'r',encoding='utf8')as fp:
         results = json.load(fp)["results"]
     for sample_token in tqdm(results.keys()):
@@ -319,3 +322,63 @@ def result2kitti_rope3d(results_file, results_path, dair_root, gt_label_path, de
             demo_file = os.path.join(results_path, "demo", "{:06d}".format(sample_id) + ".jpg")
             pcd_vis(bboxes, demo_file, label_path)
     return os.path.join(results_path, "data")
+
+
+def result2kitti(results_file, results_path, kitti_root, gt_label_path, demo=False):
+    with open(results_file,'r',encoding='utf8')as fp:
+        results = json.load(fp)["results"]
+    for sample_token in tqdm(results.keys()):
+        sample_id = int(sample_token)
+        src_calib_file = os.path.join(kitti_root, "training/calib", sample_token + ".txt")
+        P2, r_velo2cam, t_velo2cam = load_calib_kitti(src_calib_file)
+        Tr_velo2cam = np.eye(4)
+        Tr_velo2cam[:3, :3], Tr_velo2cam[:3, 3] = r_velo2cam, t_velo2cam
+
+        preds = results[sample_token]
+        pred_lines = []
+        bboxes = []
+        for pred in preds:
+            loc = pred["translation"]
+            dim = pred["size"]
+            yaw_lidar = pred["box_yaw"]
+            detection_score = pred["detection_score"]
+            class_name = pred["detection_name"]
+            w, l, h = dim[0], dim[1], dim[2]
+            x, y, z = loc[0], loc[1], loc[2]            
+            yaw  = 0.5 * np.pi - yaw_lidar
+            cam_x, cam_y, cam_z = convert_point(np.array([x, y, z, 1]).T, Tr_velo2cam)
+            box = get_lidar_3d_8points([w, l, h], yaw_lidar, [x, y, z + h/2])
+
+            box2d = bbbox2bbox(box, Tr_velo2cam, P2, img_size=[1280, 384])
+            if detection_score > 0.25 and class_name in category_map_kitti.keys():
+                i1 = category_map_kitti[class_name]
+                i2 = str(0)
+                i3 = str(0)
+                i4 = str(round(0.0, 4))
+                i5, i6, i7, i8 = (
+                    str(round(box2d[0], 4)),
+                    str(round(box2d[1], 4)),
+                    str(round(box2d[2], 4)),
+                    str(round(box2d[3], 4)),
+                )
+                i9, i11, i10 = str(round(h, 4)), str(round(w, 4)), str(round(l, 4))
+                i12, i13, i14 = str(round(cam_x, 4)), str(round(cam_y, 4)), str(round(cam_z, 4))
+                i15 = str(round(yaw, 4))
+                line = [i1, i2, i3, i4, i5, i6, i7, i8, i9, i10, i11, i12, i13, i14, i15, str(round(detection_score, 4))]
+                pred_lines.append(line)
+                bboxes.append(box)
+        os.makedirs(os.path.join(results_path, "data"), exist_ok=True)
+        write_kitti_in_txt(pred_lines, os.path.join(results_path, "data", "{:06d}".format(sample_id) + ".txt"))       
+        if demo:
+            os.makedirs(os.path.join(results_path, "demo"), exist_ok=True)
+            label_path = os.path.join(gt_label_path, "{:06d}".format(sample_id) + ".txt")
+            demo_file = os.path.join(results_path, "demo", "{:06d}".format(sample_id) + ".jpg")
+            pcd_vis(bboxes, demo_file, label_path, Tr_velo2cam)
+    return os.path.join(results_path, "data")
+
+if __name__ == "__main__":
+    result_files = "outputs/results_nusc.json"
+    results_path = "outputs"
+    data_root = "data/kitti"
+    gt_label_path = "data/kitti/training/label_2"
+    # pred_label_path = result2kitti(result_files, results_path, data_root, gt_label_path, demo=True)

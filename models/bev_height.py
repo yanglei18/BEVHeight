@@ -52,12 +52,12 @@ class BEVHeight(nn.Module):
             tuple(list[dict]): Output results for tasks.
         """
         if self.is_train_height and self.training:
-            x, height_pred = self.backbone(x,
-                                          mats_dict,
-                                          timestamps,
-                                          is_return_height=True)
-            preds = self.head(x)
-            return preds, height_pred
+            x = self.backbone(x,
+                              mats_dict,
+                              timestamps,
+                              is_return_height=True)
+            preds = self.head(x[0])
+            return preds, x[1:]
         else:
             x = self.backbone(x, mats_dict, timestamps)
             preds = self.head(x)

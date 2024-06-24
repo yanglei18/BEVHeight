@@ -10,7 +10,7 @@ import pyquaternion
 from nuscenes.utils.data_classes import Box
 from pyquaternion import Quaternion
 
-from evaluators.result2kitti import result2kitti, result2kitti_rope3d, kitti_evaluation
+from evaluators.result2kitti import result2kitti, result2kitti_dair, result2kitti_rope3d, kitti_evaluation
 
 __all__ = ['RoadSideEvaluator']
 
@@ -97,9 +97,11 @@ class RoadSideEvaluator():
                                                     jsonfile_prefix)
         print(result_files, tmp_dir)
         results_path = "outputs" 
-        if 'dair' in self.data_root:
-            pred_label_path = result2kitti(result_files["img_bbox"], results_path, self.data_root, self.gt_label_path, demo=False)
-        else:
+        if 'kitti' in self.data_root:
+            pred_label_path = result2kitti(result_files["img_bbox"], results_path, self.data_root, self.gt_label_path, demo=True)
+        elif 'dair' in self.data_root:
+            pred_label_path = result2kitti_dair(result_files["img_bbox"], results_path, self.data_root, self.gt_label_path, demo=False)
+        elif 'rope3d' in self.data_root:
             pred_label_path = result2kitti_rope3d(result_files["img_bbox"], results_path, self.data_root, self.gt_label_path, demo=False)
         kitti_evaluation(pred_label_path, self.gt_label_path, current_classes=self.current_classes, metric_path="outputs/metrics")
 

@@ -7,7 +7,9 @@ import mmcv
 import numpy as np
 import torch
 from mmdet3d.core.bbox.structures.lidar_box3d import LiDARInstance3DBoxes
-from nuscenes.utils.data_classes import Box
+from nuscenes.utils.data_classes import Box, LidarPointCloud
+from nuscenes.utils.geometry_utils import view_points
+
 from PIL import Image
 from pyquaternion import Quaternion
 from torch.utils.data import Dataset
@@ -87,7 +89,7 @@ def get_rot(h):
         [-np.sin(h), np.cos(h)],
     ])
 
-def img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat):
+def img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat, fillcolor=(0,0,0)):
     center = intrin_mat[:2, 2].astype(np.int32) 
     center = (int(center[0]), int(center[1]))
 
@@ -102,7 +104,7 @@ def img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat):
         image.paste(img, (w_min, h_min,  w_min + new_W, h_min + new_H))
     else:
         image = img.crop((w_min, h_min,  w_min + W, h_min + H))
-    img = image.rotate(-roll, expand=0, center=center, translate=(0, transform_pitch), fillcolor=(0,0,0), resample=Image.BICUBIC)
+    img = image.rotate(-roll, expand=0, center=center, translate=(0, transform_pitch), fillcolor=fillcolor, resample=Image.BICUBIC)
     return img
 
 def img_transform(img, resize, resize_dims, crop, flip, rotate):
@@ -208,8 +210,34 @@ def depth_transform(cam_depth, resize, resize_dims, crop, flip, rotate):
     depth_map[depth_coords[valid_mask, 1],
               depth_coords[valid_mask, 0]] = cam_depth[valid_mask, 2]
 
-    return torch.Tensor(depth_map)
+    return depth_map
 
+
+def map_pointcloud_to_image(
+    lidar_points,
+    img,
+    lidar_calibrated_sensor,
+    cam_calibrated_sensor,
+    min_dist: float = 0.0,
+):
+    lidar_points = LidarPointCloud(lidar_points.T)
+    lidar_points.rotate(lidar_calibrated_sensor['rotation_matrix'])
+    lidar_points.translate(np.array(lidar_calibrated_sensor['translation']))
+
+    depths = lidar_points.points[2, :]
+    coloring = depths
+    points = view_points(lidar_points.points[:3, :],
+                        np.array(cam_calibrated_sensor['camera_intrinsic']),
+                        normalize=True)
+    mask = np.ones(depths.shape[0], dtype=bool)
+    mask = np.logical_and(mask, depths > min_dist)
+    mask = np.logical_and(mask, points[0, :] > 1)
+    mask = np.logical_and(mask, points[0, :] < img.size[0] - 1)
+    mask = np.logical_and(mask, points[1, :] > 1)
+    mask = np.logical_and(mask, points[1, :] < img.size[1] - 1)
+    points = points[:, mask]
+    coloring = coloring[mask]
+    return points, coloring, mask
 
 class NuscMVDetDataset(Dataset):
     def __init__(self,
@@ -370,8 +398,24 @@ class NuscMVDetDataset(Dataset):
         flip_dx = False
         flip_dy = False
         return rotate_bda, scale_bda, flip_dx, flip_dy
+
+    def get_lidar_height(self, lidar_points, sweepsensor2keyego, sensor2virtual, reference_height):
+        keyego2virtual = np.matmul(np.linalg.inv(sweepsensor2keyego), sensor2virtual)
+        lidar_points = LidarPointCloud(lidar_points.T)
+        lidar_points.rotate(keyego2virtual[:3, :3])
+        lidar_points.translate(keyego2virtual[:3, 3])
+        delta_height = reference_height - lidar_points.points[1, :]
+        return delta_height
+
+    def get_lidar_depth(self, lidar_points, img, lidar_info, cam_info):
+        lidar_calibrated_sensor = lidar_info['LIDAR_TOP']['calibrated_sensor']
+        cam_calibrated_sensor = cam_info['calibrated_sensor']
+        pts_img, depth, mask = map_pointcloud_to_image(
+            lidar_points, img, lidar_calibrated_sensor, 
+            cam_calibrated_sensor)
+        return pts_img, depth, mask 
     
-    def get_image(self, cam_infos, cams):
+    def get_image(self, cam_infos, cams, lidar_infos=None):
         """Given data and cam_names, return image data needed.
 
         Args:
@@ -397,7 +441,8 @@ class NuscMVDetDataset(Dataset):
         sweep_sensor2virtual_mats = list()
         sweep_timestamps = list()
         sweep_reference_heights = list()
-        gt_depth = list()
+
+        gt_depth, gt_height = list(), list()
         for cam in cams:
             imgs = list()
             sensor2ego_mats = list()
@@ -407,6 +452,8 @@ class NuscMVDetDataset(Dataset):
             sensor2virtual_mats=list()
             reference_heights = list()
             timestamps = list()
+            sweep_timestamps = list()
+
             key_info = cam_infos[0]
             resize, resize_dims, crop, flip, \
                 rotate_ida = self.sample_ida_augmentation(
@@ -442,19 +489,22 @@ class NuscMVDetDataset(Dataset):
                 sweepego2global[:3, :3] = sweepego2global_rot
                 sweepego2global[:3, -1] = sweepego2global_tran
                 
-                intrin_mat = torch.zeros((4, 4))
-                intrin_mat[3, 3] = 1
-                intrin_mat[:3, :3] = torch.Tensor(
-                    cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
+                intrin_mat = torch.eye(4)
+                if cam_info[cam]['calibrated_sensor']['camera_intrinsic'].shape[1] == 4:
+                    intrin_mat[:3, :] = torch.Tensor(
+                        cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
+                else:
+                    intrin_mat[:3, :3] = torch.Tensor(
+                        cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
-                
+                data_augmentation = False
                 if self.is_train and random.random() < 0.5:
+                    data_augmentation = True
                     intrin_mat, sweepego2sweepsensor, ratio, roll, transform_pitch = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
                     img = img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat.numpy())
                 
                 denorm = get_denorm(sweepego2sweepsensor.numpy())
                 sweepsensor2sweepego = sweepego2sweepsensor.inverse()
-
                 # global sensor to cur ego
                 w, x, y, z = key_info[cam]['ego_pose']['rotation']
                 keyego2global_rot = torch.Tensor(
@@ -486,21 +536,42 @@ class NuscMVDetDataset(Dataset):
                     @ sweepsensor2sweepego).inverse()
                 sweepsensor2keyego = global2keyego @ sweepego2global @\
                     sweepsensor2sweepego
-                sensor2virtual = torch.Tensor(get_sensor2virtual(denorm))
+                sensor2virtual = get_sensor2virtual(denorm)
+                reference_height = get_reference_height(denorm)
                 sensor2ego_mats.append(sweepsensor2keyego)
                 sensor2sensor_mats.append(keysensor2sweepsensor)
-                sensor2virtual_mats.append(sensor2virtual)
+                sensor2virtual_mats.append(torch.Tensor(sensor2virtual))
+                reference_heights.append(reference_height)
 
                 if self.return_depth and sweep_idx == 0:
-                    file_name = os.path.split(cam_info[cam]['filename'])[-1]
-                    point_depth = np.fromfile(os.path.join(
-                        self.data_root, 'depth_gt', f'{file_name}.bin'),
-                                              dtype=np.float32,
-                                              count=-1).reshape(-1, 3)
+                    lidar_path = lidar_infos[sweep_idx]['LIDAR_TOP']['filename']
+                    lidar_points = np.fromfile(os.path.join(self.data_root, lidar_path),
+                                               dtype=np.float32,
+                                               count=-1).reshape(-1, 4)[..., :4]
+                    pts_img, depth, mask = self.get_lidar_depth(
+                        lidar_points.copy(), img,
+                        lidar_infos[sweep_idx], cam_info[cam])
+                    height = self.get_lidar_height(
+                        lidar_points.copy(), sweepsensor2keyego, sensor2virtual, reference_height)
+                    height = height[mask]
+                    point_depth = np.concatenate([pts_img[:2, :].T, depth[:, None]], axis=1).astype(np.float32)
+                    point_height = np.concatenate([pts_img[:2, :].T, height[:, None]], axis=1).astype(np.float32)
                     point_depth_augmented = depth_transform(
-                        point_depth, resize, self.ida_aug_conf['final_dim'],
-                        crop, flip, rotate_ida)
-                    gt_depth.append(point_depth_augmented)
+                        point_depth, resize, self.ida_aug_conf['final_dim'], crop, flip, rotate_ida)
+                    point_height_augmented = depth_transform(
+                        point_height, resize, self.ida_aug_conf['final_dim'], crop, flip, rotate_ida)
+                    if data_augmentation:
+                        point_depth_augmented = Image.fromarray(point_depth_augmented)
+                        point_height_augmented = Image.fromarray(point_height_augmented)
+                        point_depth_augmented = img_intrin_extrin_transform(point_depth_augmented, ratio, roll, transform_pitch, intrin_mat.numpy(), fillcolor=0)
+                        point_height_augmented = img_intrin_extrin_transform(point_height_augmented, ratio, roll, transform_pitch, intrin_mat.numpy(), fillcolor=10)
+                        point_depth_augmented = np.array(point_depth_augmented)
+                        point_height_augmented = np.array(point_height_augmented)
+                        point_depth_augmented = point_depth_augmented if len(point_depth_augmented.shape) == 2 else point_depth_augmented[:,:,0]
+                        point_height_augmented = point_height_augmented if len(point_height_augmented.shape) == 2 else point_height_augmented[:,:,0]
+                    gt_depth.append(torch.Tensor(point_depth_augmented))
+                    gt_height.append(torch.Tensor(point_height_augmented))
+
                 img, ida_mat = img_transform(
                     img,
                     resize=resize,
@@ -516,7 +587,6 @@ class NuscMVDetDataset(Dataset):
                 imgs.append(img)
                 intrin_mats.append(intrin_mat)
                 timestamps.append(cam_info[cam]['timestamp'])
-                reference_heights.append(get_reference_height(denorm))
                 
             sweep_imgs.append(torch.stack(imgs))
             sweep_sensor2ego_mats.append(torch.stack(sensor2ego_mats))
@@ -551,6 +621,8 @@ class NuscMVDetDataset(Dataset):
         ]
         if self.return_depth:
             ret_list.append(torch.stack(gt_depth))
+            ret_list.append(torch.stack(gt_height))
+
         return ret_list
 
     def get_gt(self, info, cams):
@@ -618,7 +690,7 @@ class NuscMVDetDataset(Dataset):
     def __getitem__(self, idx):
         if self.use_cbgs:
             idx = self.sample_indices[idx]
-        cam_infos = list()
+        cam_infos, lidar_infos = list(), list()
         # TODO: Check if it still works when number of cameras is reduced.
         cams = self.choose_cams()
         for key_idx in self.key_idxes:
@@ -632,9 +704,11 @@ class NuscMVDetDataset(Dataset):
                 cur_idx = idx
             info = self.infos[cur_idx]
             cam_infos.append(info['cam_infos'])
+            lidar_infos.append(info['lidar_infos'])
             for sweep_idx in self.sweeps_idx:
                 if len(info['sweeps']) == 0:
                     cam_infos.append(info['cam_infos'])
+                    lidar_infos.append(info['lidar_infos'])
                 else:
                     # Handle scenarios when current sweep doesn't have all
                     # cam keys.
@@ -644,7 +718,7 @@ class NuscMVDetDataset(Dataset):
                                 for cam in cams]) == len(cams):
                             cam_infos.append(info['sweeps'][i])
                             break
-        image_data_list = self.get_image(cam_infos, cams)
+        image_data_list = self.get_image(cam_infos, cams, lidar_infos)
         ret_list = list()
         (
             sweep_imgs,
@@ -689,6 +763,8 @@ class NuscMVDetDataset(Dataset):
         ]
         if self.return_depth:
             ret_list.append(image_data_list[9])
+            ret_list.append(image_data_list[10])
+
         return ret_list
 
     def __str__(self):
@@ -715,7 +791,7 @@ def collate_fn(data, is_return_depth=False):
     gt_boxes_batch = list()
     gt_labels_batch = list()
     img_metas_batch = list()
-    depth_labels_batch = list()
+    depth_labels_batch, height_labels_batch = list(), list()
     for iter_data in data:
         (
             sweep_imgs,
@@ -732,8 +808,9 @@ def collate_fn(data, is_return_depth=False):
             gt_labels,
         ) = iter_data[:12]
         if is_return_depth:
-            gt_depth = iter_data[12]
+            gt_depth, gt_height = iter_data[12], iter_data[13]
             depth_labels_batch.append(gt_depth)
+            height_labels_batch.append(gt_height)
         imgs_batch.append(sweep_imgs)
         sensor2ego_mats_batch.append(sweep_sensor2ego_mats)
         intrin_mats_batch.append(sweep_intrins)
@@ -764,4 +841,6 @@ def collate_fn(data, is_return_depth=False):
     ]
     if is_return_depth:
         ret_list.append(torch.stack(depth_labels_batch))
+        ret_list.append(torch.stack(height_labels_batch))
+
     return ret_list

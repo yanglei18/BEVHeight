@@ -10,6 +10,7 @@ from mmdet.models.backbones.resnet import BasicBlock
 from torch import nn
 
 from ops.voxel_pooling import voxel_pooling
+from layers.backbones.dh_fusion import DHFusion
 
 __all__ = ['LSSFPN']
 
@@ -250,7 +251,7 @@ class HeightNet(nn.Module):
 
 
 class LSSFPN(nn.Module):
-    def __init__(self, x_bound, y_bound, z_bound, d_bound, final_dim,
+    def __init__(self, x_bound, y_bound, z_bound, d_bound, h_bound, model_type, final_dim,
                  downsample_factor, output_channels, img_backbone_conf,
                  img_neck_conf, height_net_conf):
         """Modified from `https://github.com/nv-tlabs/lift-splat-shoot`.
@@ -273,6 +274,8 @@ class LSSFPN(nn.Module):
         super(LSSFPN, self).__init__()
         self.downsample_factor = downsample_factor
         self.d_bound = d_bound
+        self.h_bound = h_bound
+        self.model_type = model_type
         self.final_dim = final_dim
         self.output_channels = output_channels
 
@@ -289,7 +292,9 @@ class LSSFPN(nn.Module):
             torch.LongTensor([(row[1] - row[0]) / row[2]
                               for row in [x_bound, y_bound, z_bound]]))
         self.register_buffer('frustum', self.create_frustum())
+        self.register_buffer('frustum_depth', self.create_frustum_depth())
         self.height_channels, _, _, _ = self.frustum.shape
+        self.depth_channels, _, _, _ = self.frustum_depth.shape
 
         self.img_backbone = build_backbone(img_backbone_conf)
         self.img_neck = build_neck(img_neck_conf)
@@ -297,14 +302,41 @@ class LSSFPN(nn.Module):
 
         self.img_neck.init_weights()
         self.img_backbone.init_weights()
+        if self.model_type == 2:
+            self.dh_fusion = DHFusion(channels=self.output_channels + self.height_channels, num_heads=8, num_levels=1, num_layers=3)
+
+    def get_geo_channels(self,):
+        if self.model_type == 0:
+            return self.depth_channels
+        elif self.model_type == 1:
+            return self.height_channels
+        elif self.model_type == 2:
+            return self.height_channels + self.depth_channels
 
     def _configure_height_net(self, height_net_conf):
         return HeightNet(
             height_net_conf['in_channels'],
             height_net_conf['mid_channels'],
             self.output_channels,
-            self.height_channels,
+            self.get_geo_channels(),
         )
+    
+    def create_frustum_depth(self):
+        """Generate frustum_depth"""
+        ogfH, ogfW = self.final_dim
+        fH, fW = ogfH // self.downsample_factor, ogfW // self.downsample_factor
+        d_coords = torch.arange(*self.d_bound,
+                                dtype=torch.float).view(-1, 1,
+                                                        1).expand(-1, fH, fW)
+        D, _, _ = d_coords.shape
+        x_coords = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(
+            1, 1, fW).expand(D, fH, fW)
+        y_coords = torch.linspace(0, ogfH - 1, fH,
+                                  dtype=torch.float).view(1, fH,
+                                                          1).expand(D, fH, fW)
+        paddings = torch.ones_like(d_coords)
+        frustum = torch.stack((x_coords, y_coords, d_coords, paddings), -1)
+        return frustum
 
     def create_frustum(self):
         """Generate frustum"""
@@ -313,10 +345,10 @@ class LSSFPN(nn.Module):
         fH, fW = ogfH // self.downsample_factor, ogfW // self.downsample_factor
         
         # DID
-        alpha = 1.5
-        d_coords = np.arange(self.d_bound[2]) / self.d_bound[2]
+        alpha = 1.0
+        d_coords = np.arange(self.h_bound[2]) / self.h_bound[2]
         d_coords = np.power(d_coords, alpha)
-        d_coords = self.d_bound[0] + d_coords * (self.d_bound[1] - self.d_bound[0])
+        d_coords = self.h_bound[0] + d_coords * (self.h_bound[1] - self.h_bound[0])
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
         
         D, _, _ = d_coords.shape
@@ -330,6 +362,16 @@ class LSSFPN(nn.Module):
         # D x H x W x 3
         frustum = torch.stack((x_coords, y_coords, d_coords, paddings), -1)
         return frustum
+
+    def depth2location(self, points, sensor2ego_mat, intrin_mat):
+        batch_size, num_cams, _, _ = sensor2ego_mat.shape
+        points = torch.cat(
+            (points[:, :, :, :, :, :2] * points[:, :, :, :, :, 2:3],
+             points[:, :, :, :, :, 2:]), 5)
+        combine = sensor2ego_mat.matmul(torch.inverse(intrin_mat))
+        points = combine.view(batch_size, num_cams, 1, 1, 1, 4,
+                              4).matmul(points)
+        return points
     
     def height2localtion(self, points, sensor2ego_mat, sensor2virtual_mat, intrin_mat, reference_heights):
         batch_size, num_cams, _, _ = sensor2ego_mat.shape
@@ -354,27 +396,29 @@ class LSSFPN(nn.Module):
         return points
     
     def get_geometry(self, sensor2ego_mat, sensor2virtual_mat, intrin_mat, ida_mat, reference_heights, bda_mat):
-        """Transfer points from camera coord to ego coord.
-
-        Args:
-            rots(Tensor): Rotation matrix from camera to ego.
-            trans(Tensor): Translation matrix from camera to ego.
-            intrins(Tensor): Intrinsic matrix.
-            post_rots_ida(Tensor): Rotation matrix for ida.
-            post_trans_ida(Tensor): Translation matrix for ida
-            post_rot_bda(Tensor): Rotation matrix for bda.
-
-        Returns:
-            Tensors: points ego coord.
-        """
         batch_size, num_cams, _, _ = sensor2ego_mat.shape
         
-        # undo post-transformation
-        # B x N x D x H x W x 3
         points = self.frustum
         ida_mat = ida_mat.view(batch_size, num_cams, 1, 1, 1, 4, 4)
         points = ida_mat.inverse().matmul(points.unsqueeze(-1))
         points = self.height2localtion(points, sensor2ego_mat, sensor2virtual_mat, intrin_mat, reference_heights) 
+
+        if bda_mat is not None:
+            bda_mat = bda_mat.unsqueeze(1).repeat(1, num_cams, 1, 1).view(
+                batch_size, num_cams, 1, 1, 1, 4, 4)
+            points = (bda_mat @ points).squeeze(-1)
+        else:
+            points = points.squeeze(-1)
+        return points[..., :3]
+
+    def get_geometry_depth(self, sensor2ego_mat, intrin_mat, ida_mat, bda_mat):
+        batch_size, num_cams, _, _ = sensor2ego_mat.shape
+        
+        points = self.frustum_depth
+        ida_mat = ida_mat.view(batch_size, num_cams, 1, 1, 1, 4, 4)
+        points = ida_mat.inverse().matmul(points.unsqueeze(-1))
+        points = self.depth2location(points, sensor2ego_mat, intrin_mat)
+        
         if bda_mat is not None:
             bda_mat = bda_mat.unsqueeze(1).repeat(1, num_cams, 1, 1).view(
                 batch_size, num_cams, 1, 1, 1, 4, 4)
@@ -401,53 +445,35 @@ class LSSFPN(nn.Module):
     def _forward_voxel_net(self, img_feat_with_height):
         return img_feat_with_height
 
-    def _forward_single_sweep(self,
-                              sweep_index,
-                              sweep_imgs,
-                              mats_dict,
-                              is_return_height=False):
-        """Forward function for single sweep.
-
-        Args:
-            sweep_index (int): Index of sweeps.
-            sweep_imgs (Tensor): Input images.
-            mats_dict (dict):
-                sensor2ego_mats(Tensor): Transformation matrix from
-                    camera to ego with shape of (B, num_sweeps,
-                    num_cameras, 4, 4).
-                intrin_mats(Tensor): Intrinsic matrix with shape
-                    of (B, num_sweeps, num_cameras, 4, 4).
-                ida_mats(Tensor): Transformation matrix for ida with
-                    shape of (B, num_sweeps, num_cameras, 4, 4).
-                sensor2sensor_mats(Tensor): Transformation matrix
-                    from key frame camera to sweep frame camera with
-                    shape of (B, num_sweeps, num_cameras, 4, 4).
-                bda_mat(Tensor): Rotation matrix for bda with shape
-                    of (B, 4, 4).
-            is_return_height (bool, optional): Whether to return height.
-                Default: False.
-
-        Returns:
-            Tensor: BEV feature map.
-        """
-        batch_size, num_sweeps, num_cams, num_channels, img_height, \
-            img_width = sweep_imgs.shape
-        img_feats = self.get_cam_feats(sweep_imgs)
-        source_features = img_feats[:, 0, ...]
-        height_feature = self._forward_height_net(
-            source_features.reshape(batch_size * num_cams,
-                                    source_features.shape[2],
-                                    source_features.shape[3],
-                                    source_features.shape[4]),
-            mats_dict,
+    def _process_depth_features(self, depth, img_feat, batch_size, num_cams, sweep_index, mats_dict):
+        img_feat_with_depth = depth.unsqueeze(1) * img_feat.unsqueeze(2)
+        img_feat_with_depth = self._forward_voxel_net(img_feat_with_depth)
+        img_feat_with_depth = img_feat_with_depth.reshape(
+            batch_size,
+            num_cams,
+            img_feat_with_depth.shape[1],
+            img_feat_with_depth.shape[2],
+            img_feat_with_depth.shape[3],
+            img_feat_with_depth.shape[4],
         )
-        height = height_feature[:, :self.height_channels].softmax(1)
         
-        img_feat_with_height = height.unsqueeze(
-            1) * height_feature[:, self.height_channels:(
-                self.height_channels + self.output_channels)].unsqueeze(2)
-        img_feat_with_height = self._forward_voxel_net(img_feat_with_height)
+        geom_xyz = self.get_geometry_depth(
+            mats_dict['sensor2ego_mats'][:, sweep_index, ...],
+            mats_dict['intrin_mats'][:, sweep_index, ...],
+            mats_dict['ida_mats'][:, sweep_index, ...],
+            mats_dict.get('bda_mat', None),
+        )
+        img_feat_with_depth = img_feat_with_depth.permute(0, 1, 3, 4, 5, 2)
+        geom_xyz = ((geom_xyz - (self.voxel_coord - self.voxel_size / 2.0)) /
+                    self.voxel_size).int()
+        feature_map = voxel_pooling(geom_xyz, img_feat_with_depth.contiguous(),
+                                   self.voxel_num.cuda())
+        return feature_map
 
+
+    def _process_height_features(self, height, img_feat, batch_size, num_cams, sweep_index, mats_dict):
+        img_feat_with_height = height.unsqueeze(1) * img_feat.unsqueeze(2)
+        img_feat_with_height = self._forward_voxel_net(img_feat_with_height)
         img_feat_with_height = img_feat_with_height.reshape(
             batch_size,
             num_cams,
@@ -468,13 +494,53 @@ class LSSFPN(nn.Module):
         img_feat_with_height = img_feat_with_height.permute(0, 1, 3, 4, 5, 2)
         geom_xyz = ((geom_xyz - (self.voxel_coord - self.voxel_size / 2.0)) /
                     self.voxel_size).int()
-        
         feature_map = voxel_pooling(geom_xyz, img_feat_with_height.contiguous(),
                                    self.voxel_num.cuda())
-        
-        if is_return_height:
-            return feature_map.contiguous(), height
-        return feature_map.contiguous()
+        return feature_map
+
+
+    def _forward_single_sweep(self,
+                              sweep_index,
+                              sweep_imgs,
+                              mats_dict,
+                              is_return_height=False):
+        batch_size, num_sweeps, num_cams, num_channels, img_height, \
+            img_width = sweep_imgs.shape
+        img_feats = self.get_cam_feats(sweep_imgs)
+        source_features = img_feats[:, 0, ...]
+        source_features = self._forward_height_net(
+            source_features.reshape(batch_size * num_cams,
+                                    source_features.shape[2],
+                                    source_features.shape[3],
+                                    source_features.shape[4]),
+            mats_dict,
+        )
+        if self.model_type == 0:
+            depth = source_features[:, :self.depth_channels].softmax(1)
+            img_feat = source_features[:, self.depth_channels:(self.depth_channels + self.output_channels)]
+            feature_map = self._process_depth_features(depth, img_feat, batch_size, num_cams, sweep_index, mats_dict)
+            if is_return_height:
+                return feature_map.contiguous(), depth
+            return feature_map.contiguous()
+        elif self.model_type == 1:
+            height = source_features[:, :self.height_channels].softmax(1)
+            img_feat = source_features[:, self.height_channels:(self.height_channels + self.output_channels)]
+            feature_map = self._process_height_features(height, img_feat, batch_size, num_cams, sweep_index, mats_dict)
+            if is_return_height:
+                return feature_map.contiguous(), height
+            return feature_map.contiguous()
+        elif self.model_type == 2:
+            depth = source_features[:, :self.depth_channels].softmax(1)
+            height = source_features[:, self.depth_channels:(self.depth_channels+self.height_channels)].softmax(1)
+            img_feat = source_features[:, (self.depth_channels+self.height_channels):(self.depth_channels+self.height_channels + self.output_channels)]
+            img_feat = torch.cat((img_feat, height), dim=1)
+            feature_map_h = self._process_height_features(height, img_feat, batch_size, num_cams, sweep_index, mats_dict)
+            feature_map_d = self._process_depth_features(depth, img_feat, batch_size, num_cams, sweep_index, mats_dict)
+            
+            feature_map = self.dh_fusion(feature_map_d, feature_map_h).contiguous()
+            if is_return_height:
+                return feature_map.contiguous(), depth, height
+            return feature_map.contiguous()
 
     def forward(self,
                 sweep_imgs,
