@@ -1,5 +1,6 @@
 outputs/
 hub/
+data/
 data/kitti
 build/
 BEVHeight.egg-info/

@@ -3,6 +3,8 @@
 ## Recommended docker image
 ```shell
 docker pull yanglei2024/op-bevheight:base
+cd BEVHeight
+python setup.py develop
 ```
 
 ## Installation

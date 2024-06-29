@@ -1,6 +1,8 @@
 import os
 import csv
 import math
+import random
+import argparse
 
 import pickle
 import numpy as np
@@ -127,20 +129,21 @@ def get_annos(label_path, r_cam2velo, t_cam2velo):
     return annos
 
 def generate_info_kitti(kitti_root, split='train'):
-    src_dir = os.path.join(kitti_root, "training")
+    src_dir = os.path.join(kitti_root, "training") if split in ["train", "val"] else os.path.join(kitti_root, "testing")
     label_path = os.path.join(src_dir, "label_2")
     calib_path = os.path.join(src_dir, "calib")
-    split_txt = os.path.join(kitti_root, "ImageSets",  "train.txt" if split=='train' else 'val.txt')
+    split_txt = os.path.join(kitti_root, "ImageSets",  split + ".txt")
     idx_list = [x.strip() for x in open(split_txt).readlines()]
     infos = list()
     for idx in tqdm(range(len(idx_list))):
         index = idx_list[idx]
+        sample_token = "training/" + index if split in ["train", "val"] else "testing/" + index
         label_file = os.path.join(label_path, index + ".txt")
         calib_file = os.path.join(calib_path, index + ".txt")
         
         info = dict()
         cam_info = dict()
-        info['sample_token'] = index
+        info['sample_token'] = sample_token
         info['timestamp'] = int(index)
         info['scene_token'] = index
         
@@ -149,12 +152,12 @@ def generate_info_kitti(kitti_root, split='train'):
         cam_infos, lidar_infos = dict(), dict()
         for cam_name in cam_names:
             cam_info = dict()
-            cam_info['sample_token'] = index
+            cam_info['sample_token'] = sample_token
             cam_info['timestamp'] = int(index)
             cam_info['is_key_frame'] = True
             cam_info['height'] = 384
             cam_info['width'] = 1280
-            cam_info['filename'] = os.path.join("training", "image_2", index + ".png") 
+            cam_info['filename'] = os.path.join("training", "image_2", index + ".png") if split in ["train", "val"] else os.path.join("testing", "image_2", index + ".png")
             ego_pose = {"translation": [0.0, 0.0, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "token": index, "timestamp": int(index)}
             cam_info['ego_pose'] = ego_pose
             
@@ -172,7 +175,7 @@ def generate_info_kitti(kitti_root, split='train'):
         for lidar_name in lidar_names:
             calibrated_sensor = {"token": index, "sensor_token": index, "translation": t_velo2cam.flatten(), "rotation_matrix": r_velo2cam}
             lidar_info = dict(
-                filename=os.path.join("training", "velodyne", index + ".bin"),
+                filename=os.path.join("training", "velodyne", index + ".bin") if split in ["train", "val"] else os.path.join("testing", "velodyne", index + ".bin"),
                 calibrated_sensor=calibrated_sensor,
             )
             lidar_infos[lidar_name] = lidar_info
@@ -181,7 +184,7 @@ def generate_info_kitti(kitti_root, split='train'):
         info['lidar_infos'] = lidar_infos
         info['sweeps'] = list()
         ann_infos = list()
-        annos = get_annos(label_file, r_cam2velo, t_cam2velo)
+        annos = get_annos(label_file, r_cam2velo, t_cam2velo) if split in ["train", "val"] else list()
         for anno in annos:
             category_name = anno["name"]
             translation = anno["loc"]
@@ -198,7 +201,7 @@ def generate_info_kitti(kitti_root, split='train'):
             ann_info["size"] = size
             ann_info["prev"] = ""
             ann_info["next"] = ""
-            ann_info["sample_token"] = index
+            ann_info["sample_token"] = sample_token
             ann_info["instance_token"] = index
             ann_info["token"] = index
             ann_info["visibility_token"] = str(anno["occluded_state"])
@@ -211,19 +214,33 @@ def generate_info_kitti(kitti_root, split='train'):
     return infos
 
 def main():
-    # kitti_root = "data/kitti"
-    kitti_root = "/proj/usr/lei.yang/kitti_dataset"
-    
+    parser = argparse.ArgumentParser(description="Create Dataset Infos in KITTI format ...")
+    parser.add_argument("--data_root", type=str,
+                        default="data/kitti",
+                        help="Path to Dataset root in KITTI format")
+    args = parser.parse_args()
+
+    kitti_root = args.data_root # data/kitti  data/kitti-360  data/waymo-kitti
+    prefix = kitti_root.split('/')[1]
     train_infos = generate_info_kitti(kitti_root, split='train')
     val_infos = generate_info_kitti(kitti_root, split='val')
+    test_infos = generate_info_kitti(kitti_root, split='test')
 
-    with open('./data/kitti/kitti_12hz_infos_train.pkl','wb') as fid:
+    with open(os.path.join(kitti_root, prefix + "_12hz_infos_train.pkl"), 'wb') as fid:        
         pickle.dump(train_infos, fid)
-    with open('./data/kitti/kitti_12hz_infos_val.pkl','wb') as fid:
+    with open(os.path.join(kitti_root, prefix + "_12hz_infos_val.pkl"), 'wb') as fid:        
         pickle.dump(val_infos, fid)
-    
-    with open('./data/kitti/kitti_12hz_infos_trainval.pkl','wb') as fid:
-        pickle.dump(train_infos + val_infos, fid)
+    with open(os.path.join(kitti_root, prefix + "_12hz_infos_test.pkl"), 'wb') as fid:        
+        pickle.dump(test_infos, fid)
+
+    trainval_infos = train_infos + val_infos
+    random.shuffle(trainval_infos)
+    with open(os.path.join(kitti_root, prefix + "_12hz_infos_trainval.pkl"), 'wb') as fid:        
+        pickle.dump(trainval_infos, fid)
+    trainvaltest_infos = train_infos + val_infos + test_infos
+    random.shuffle(trainvaltest_infos)
+    with open(os.path.join(kitti_root, prefix + "_12hz_infos_trainval_test.pkl"), 'wb') as fid:
+        pickle.dump(trainvaltest_infos, fid)
 
 if __name__ == '__main__':
     main()

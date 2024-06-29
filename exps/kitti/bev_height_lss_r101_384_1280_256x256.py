@@ -35,10 +35,10 @@ gt_label_path = "data/kitti/training/label_2"
 bev_dim = 160 if model_type==2 else 80
  
 backbone_conf = {
-    'x_bound': [0, 102.4, 0.8],
-    'y_bound': [-51.2, 51.2, 0.8],
+    'x_bound': [0, 102.4, 0.4],
+    'y_bound': [-51.2, 51.2, 0.4],
     'z_bound': [-5, 3, 8],
-    'd_bound': [1.0, 112.0, 0.5],
+    'd_bound': [1.0, 102.0, 0.5],
     'h_bound': [-2.0, 0.0, 80],
     'model_type': model_type,
     'final_dim':
@@ -50,11 +50,11 @@ backbone_conf = {
     'img_backbone_conf':
     dict(
         type='ResNet',
-        depth=50,
+        depth=101,
         frozen_stages=0,
         out_indices=[0, 1, 2, 3],
         norm_eval=False,
-        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50'),
+        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet101'),
     ),
     'img_neck_conf':
     dict(
@@ -115,6 +115,7 @@ TASKS = [
     # dict(num_class=1, class_names=['barrier']),
     # dict(num_class=2, class_names=['motorcycle', 'bicycle']),
     # dict(num_class=2, class_names=['pedestrian', 'traffic_cone']),
+    # dict(num_class=1, class_names=['bicycle']),
 ]
 
 common_heads = dict(reg=(2, 2),
@@ -125,19 +126,19 @@ common_heads = dict(reg=(2, 2),
 
 bbox_coder = dict(
     type='CenterPointBBoxCoder',
-    post_center_range=[0.0, -61.2, -10.0, 122.4, 61.2, 10.0],
+    post_center_range=[0.0, -51.2, -10.0, 102.4, 51.2, 10.0],
     max_num=500,
     score_threshold=0.1,
     out_size_factor=4,
-    voxel_size=[0.2, 0.2, 8],
-    pc_range=[0, -51.2, -5, 104.4, 51.2, 3],
+    voxel_size=[0.1, 0.1, 8],
+    pc_range=[0, -51.2, -5, 102.4, 51.2, 3],
     code_size=9,
 )
 
 train_cfg = dict(
     point_cloud_range=[0, -51.2, -5, 102.4, 51.2, 3],
-    grid_size=[512, 512, 1],
-    voxel_size=[0.2, 0.2, 8],
+    grid_size=[1024, 1024, 1],
+    voxel_size=[0.1, 0.1, 8],
     out_size_factor=4,
     dense_reg=1,
     gaussian_overlap=0.1,
@@ -147,13 +148,13 @@ train_cfg = dict(
 )
 
 test_cfg = dict(
-    post_center_limit_range=[0.0, -61.2, -10.0, 122.4, 61.2, 10.0],
+    post_center_limit_range=[0.0, -51.2, -10.0, 102.4, 51.2, 10.0],
     max_per_img=500,
     max_pool_nms=False,
     min_radius=[4, 12, 10, 1, 0.85, 0.175],
     score_threshold=0.1,
     out_size_factor=4,
-    voxel_size=[0.2, 0.2, 8],
+    voxel_size=[0.1, 0.1, 8],
     nms_type='circle',
     pre_max_size=1000,
     post_max_size=83,
@@ -202,15 +203,15 @@ class BEVHeightLightningModel(LightningModule):
         self.backbone_conf = backbone_conf
         self.head_conf = head_conf
         self.ida_aug_conf = ida_aug_conf
+        self.return_depth = return_depth
         mmcv.mkdir_or_exist(default_root_dir)
         self.default_root_dir = default_root_dir
         self.evaluator = RoadSideEvaluator(class_names=self.class_names,
-                                           # current_classes=["Car", "Pedestrian", "Cyclist"],
-                                           current_classes=["Car"],
+                                           current_classes=["Car", "Pedestrian", "Cyclist"],
                                            data_root=data_root,
                                            gt_label_path=gt_label_path,
                                            output_dir=self.default_root_dir)
-        self.model = BEVHeight(self.backbone_conf, self.head_conf, is_train_height=return_depth)
+        self.model = BEVHeight(self.backbone_conf, self.head_conf, is_train_height=self.return_depth)
         self.mode = 'valid'
         self.img_conf = img_conf
         self.data_use_cbgs = False
@@ -222,13 +223,12 @@ class BEVHeightLightningModel(LightningModule):
         self.hbound = self.backbone_conf['h_bound']
         self.height_channels = int(self.hbound[2])
         self.depth_channels = int((self.dbound[1] - self.dbound[0]) / self.dbound[2])
-        self.return_depth = return_depth
         self.val_list = [x.strip() for x in open(os.path.join(data_root, "ImageSets",  "val.txt")).readlines()]
 
     def is_inval(self, img_metas):
         for img_meta in img_metas:
-            if img_meta['token'] in self.val_list:
-                return True
+            if img_meta['token'].split("/")[1] in self.val_list:
+                return True            
         return False
 
     def forward(self, sweep_imgs, mats):
@@ -288,8 +288,7 @@ class BEVHeightLightningModel(LightningModule):
                 if self.is_inval(img_metas):
                     return depth_loss + height_loss
                 else:
-                    # return detection_loss + depth_loss + height_loss
-                    return depth_loss + height_loss
+                    return detection_loss + depth_loss + height_loss
         else:
             return detection_loss
 
@@ -456,7 +455,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'kitti_12hz_infos_raw_data.pkl'),
+            info_path=os.path.join(data_root, 'kitti_12hz_infos_train.pkl'),
             is_train=True,
             use_cbgs=self.data_use_cbgs,
             img_conf=self.img_conf,
@@ -484,7 +483,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'kitti_12hz_infos_raw_data.pkl'),
+            info_path=os.path.join(data_root, 'kitti_12hz_infos_val.pkl'),
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,
@@ -518,17 +517,16 @@ def main(args: Namespace) -> None:
     print(args)
     
     model = BEVHeightLightningModel(**vars(args))
-    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_height_lss_r50_864_1536_128x128/checkpoints', filename='{epoch}', every_n_epochs=5, save_last=True, save_top_k=-1)
+    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_height_lss_r101_384_1280_256x256/checkpoints', filename='{epoch}', every_n_epochs=5, save_last=True, save_top_k=-1)
     trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback])
     if args.evaluate:
         for ckpt_name in os.listdir(args.ckpt_path):
             model_pth = os.path.join(args.ckpt_path, ckpt_name)
             trainer.test(model, ckpt_path=model_pth)
     else:
-        backup_codebase(os.path.join('./outputs/bev_height_lss_r50_864_1536_128x128', 'backup'))
-        if os.path.exists("pretrain_ckpt/last.ckpt"):
-            print("load checkpoints")
-            model = BEVHeightLightningModel.load_from_checkpoint("pretrain_ckpt/last.ckpt")
+        backup_codebase(os.path.join('./outputs/bev_height_lss_r101_384_1280_256x256', 'backup'))
+        if os.path.exists("pretrain_ckpt/bevheight_plus_pretrain_car.ckpt"):
+            model = BEVHeightLightningModel.load_from_checkpoint("pretrain_ckpt/bevheight_plus_pretrain_car.ckpt")
         trainer.fit(model)
         
 def run_cli():
@@ -549,14 +547,14 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=60,
+        max_epochs=50,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
         limit_val_batches=0,
         enable_checkpointing=True,
         precision=32,
-        default_root_dir='./outputs/bev_height_lss_r50_864_1536_128x128')
+        default_root_dir='./outputs/bev_height_lss_r101_384_1280_256x256')
     args = parser.parse_args()
     main(args)
 

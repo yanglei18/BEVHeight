@@ -1,13 +1,12 @@
 import os
 import math
 import json
-import mmcv
+import pickle
 
 import numpy as np
 from pyquaternion import Quaternion
 from tqdm import tqdm
 
-from scripts.vis_utils import *
 
 name2nuscenceclass = {
     "car": "vehicle.car",
@@ -29,6 +28,14 @@ def read_json(path_json):
     with open(path_json, "r") as load_f:
         my_json = json.load(load_f)
     return my_json
+
+def write_json(infos, path_json):
+    with open(path_json, "w") as file:
+        json.dump(infos, file, indent=4)
+
+def write_pickle(infos, path_pkl):
+    with open(path_pkl, "wb") as file:
+        pickle.dump(infos, file)
 
 def get_velo2cam(path):
     my_json = read_json(path)
@@ -102,7 +109,7 @@ def get_denorm(rotation_matrix, translation):
     return denorm
 
 def generate_info_dair(dair_root, split):    
-    infos = mmcv.load("data/single-infrastructure-split-data.json")
+    infos = read_json("data/single-infrastructure-split-data.json")
     split_list = infos[split]
     infos = list()
     for sample_id in tqdm(split_list):
@@ -140,8 +147,9 @@ def generate_info_dair(dair_root, split):
             ego_pose = {"translation": [0.0, 0.0, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "token": token, "timestamp": 1000000}
             lidar_info['ego_pose'] = ego_pose
             lidar_info['timestamp'] = 1000000
-            lidar_info['filename'] = "velodyne/" + sample_id + ".pcd"
+            lidar_info['filename'] = "velodyne/" + sample_id + ".pcd.bin"
             lidar_info['calibrated_sensor'] = calibrated_sensor
+
             lidar_infos[lidar_name] = lidar_info            
         info['cam_infos'] = cam_infos
         info['lidar_infos'] = lidar_infos
@@ -186,9 +194,8 @@ def main():
     dair_root = "data/dair-v2x-i"
     train_infos = generate_info_dair(dair_root, split='train')
     val_infos = generate_info_dair(dair_root, split='val')
-    
-    mmcv.dump(train_infos, './data/dair-v2x-i/dair_12hz_infos_train.pkl')
-    mmcv.dump(val_infos, './data/dair-v2x-i/dair_12hz_infos_val.pkl')
+    write_pickle(train_infos, './data/dair-v2x-i/dair_12hz_infos_train.pkl')
+    write_pickle(val_infos, './data/dair-v2x-i/dair_12hz_infos_val.pkl')
 
 if __name__ == '__main__':
     main()

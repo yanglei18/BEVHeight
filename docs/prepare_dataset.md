@@ -1,23 +1,34 @@
-# DAIR-V2X-I  Rope3D
-Download DAIR-V2X-I or Rope3D dataset from official [website](https://thudair.baai.ac.cn/index).
+# Dataset Setup
 
-## Symlink the dataset root to `./data/`.
+## DAIR-V2X-I
+Download DAIR-V2X-I dataset from official [website](https://thudair.baai.ac.cn/index).
 ```
 ln -s [single-infrastructure-side root] ./data/dair-v2x
-ln -s [rope3d root] ./data/rope3d
+python scripts/data_converter/dair2kitti.py --source-root data/dair-v2x-i --target-root data/dair-v2x-i-kitti
 ```
 
-## Convert DAIR-V2X-I or Rope3D to KITTI format.
+## Rope3D
+Download Rope3D dataset from official [website](https://thudair.baai.ac.cn/index).
 ```
-python scripts/data_converter/dair2kitti.py --source-root data/dair-v2x-i --target-root data/dair-v2x-i-kitti
+ln -s [rope3d root] ./data/rope3d
 python scripts/data_converter/rope2kitti.py --source-root data/rope3d --target-root data/rope3d-kitti
 ```
 
-## Visualize the dataset in KITTI format
-```
-python scripts/data_converter/visual_tools.py --data_root data/rope3d-kitti --demo_dir ./demo
-```
+## KITTI
+Download KITTI dataset from official [website](https://www.cvlibs.net/datasets/kitti/eval_object.php?obj_benchmark=3d).
 
+## KITTI-360
+Download KITTI-360 dataset from official [website](https://www.cvlibs.net/datasets/kitti-360/).
+
+## Waymo
+Download Waymo dataset from official [website](https://waymo.com/open/download/).
+
+## nuScenes
+Download Waymo dataset from official [website](https://www.nuscenes.org/nuscenes#download/).
+```
+git clone https://github.com/abhi1kumar/nuscenes-devkit
+
+```
 
 The directory will be as follows.
 ```
@@ -52,12 +63,65 @@ BEVHeight
 |   |   |   ├── label_2
 |   |   |   └── images_2
 |   |   └── map_token2id.json
+|   └── kitti
+|   |   ├── training
+|   |   |   ├── calib
+|   |   |   ├── label_2
+|   |   |   └── images_2
+|   |   ├── testing
+|   |   |   ├── calib
+|   |   |   ├── label_2
+|   |   |   └── images_2
+|   |   └── ImageSets
+|   |        ├── train.txt
+|   |        └── val.txt
+|   |        └── val.txt
+|   └── kitti-360
+|   |   ├── training
+|   |   |   ├── calib
+|   |   |   ├── label_2
+|   |   |   └── images_2
+|   |   ├── testing
+|   |   |   ├── calib
+|   |   |   ├── label_2
+|   |   |   └── images_2
+|   |   └── ImageSets
+|   |        ├── train.txt
+|   |        └── val.txt
+|   |        └── val.txt
+|   └── waymo-kitti
+|   |   ├── training
+|   |   |   ├── calib
+|   |   |   ├── label_2
+|   |   |   └── images_2
+|   |   ├── testing
+|   |   |   ├── calib
+|   |   |   ├── label_2
+|   |   |   └── images_2
+|   |   └── ImageSets
+|   |        ├── train.txt
+|   |        └── val.txt
+|   |        └── val.txt
 |   |       
 └── ...
 ```
 
-## Prepare DAIR-V2X-I or Rope3D infos.
+
+## Visualize the dataset in KITTI format
 ```
+python scripts/data_converter/visual_tools.py --data_root data/waymo-kitti --demo_dir ./demo
+```
+
+## Prepare infos for **DAIR-V2X-I**/**Rope3D**/**KITTI**/**KITTI-360**/**Waymo** datasets.
+```
+# DAIR-V2X-I Dataset
 python scripts/gen_info_dair.py
+# Rope3D Dataset
 python scripts/gen_info_rope3d.py
+# KITTI Dataset
+python scripts/gen_info_kitti.py --data_root data/kitti
+# KITTI-360 Dataset
+python scripts/gen_info_kitti.py --data_root data/kitti-360
+# Waymo Dataset
+python scripts/gen_info_kitti.py --data_root data/waymo-kitti
 ```
