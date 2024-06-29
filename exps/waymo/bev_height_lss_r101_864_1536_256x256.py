@@ -27,12 +27,11 @@ final_dim = (864, 1536)
 img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 img_std=[58.395, 57.12, 57.375],
                 to_rgb=True)
-model_type = 1 # 0: BEVDepth, 1: BEVHeight, 2: BEVHeight++
+model_type = 2 # 0: BEVDepth, 1: BEVHeight, 2: BEVHeight++
 
 return_depth = True
-data_root = "data/dair-v2x-i/"
-gt_label_path = "data/dair-v2x-i-kitti/training/label_2"
-
+data_root = "data/kitti/"
+gt_label_path = "data/kitti/training/label_2"
 bev_dim = 160 if model_type==2 else 80
  
 backbone_conf = {
@@ -98,24 +97,25 @@ bev_neck = dict(type='SECONDFPN',
 
 CLASSES = [
     'car',
-    'truck',
-    'construction_vehicle',
-    'bus',
-    'trailer',
-    'barrier',
-    'motorcycle',
-    'bicycle',
-    'pedestrian',
-    'traffic_cone',
+    # 'truck',
+    # 'construction_vehicle',
+    # 'bus',
+    # 'trailer',
+    # 'barrier',
+    # 'motorcycle',
+    # 'bicycle',
+    # 'pedestrian',
+    # 'traffic_cone',
 ]
 
 TASKS = [
     dict(num_class=1, class_names=['car']),
-    dict(num_class=2, class_names=['truck', 'construction_vehicle']),
-    dict(num_class=2, class_names=['bus', 'trailer']),
-    dict(num_class=1, class_names=['barrier']),
-    dict(num_class=2, class_names=['motorcycle', 'bicycle']),
-    dict(num_class=2, class_names=['pedestrian', 'traffic_cone']),
+    # dict(num_class=2, class_names=['truck', 'construction_vehicle']),
+    # dict(num_class=2, class_names=['bus', 'trailer']),
+    # dict(num_class=1, class_names=['barrier']),
+    # dict(num_class=2, class_names=['motorcycle', 'bicycle']),
+    # dict(num_class=2, class_names=['pedestrian', 'traffic_cone']),
+    # dict(num_class=1, class_names=['bicycle']),
 ]
 
 common_heads = dict(reg=(2, 2),
@@ -203,6 +203,7 @@ class BEVHeightLightningModel(LightningModule):
         self.backbone_conf = backbone_conf
         self.head_conf = head_conf
         self.ida_aug_conf = ida_aug_conf
+        self.return_depth = return_depth
         mmcv.mkdir_or_exist(default_root_dir)
         self.default_root_dir = default_root_dir
         self.evaluator = RoadSideEvaluator(class_names=self.class_names,
@@ -210,7 +211,7 @@ class BEVHeightLightningModel(LightningModule):
                                            data_root=data_root,
                                            gt_label_path=gt_label_path,
                                            output_dir=self.default_root_dir)
-        self.model = BEVHeight(self.backbone_conf, self.head_conf, is_train_height=return_depth)
+        self.model = BEVHeight(self.backbone_conf, self.head_conf, is_train_height=self.return_depth)
         self.mode = 'valid'
         self.img_conf = img_conf
         self.data_use_cbgs = False
@@ -222,14 +223,7 @@ class BEVHeightLightningModel(LightningModule):
         self.hbound = self.backbone_conf['h_bound']
         self.height_channels = int(self.hbound[2])
         self.depth_channels = int((self.dbound[1] - self.dbound[0]) / self.dbound[2])
-        self.return_depth = return_depth
-        self.val_list = [x.strip() for x in open(os.path.join("data/dair-v2x-i-kitti", "ImageSets",  "val.txt")).readlines()]
-
-    def is_inval(self, img_metas):
-        for img_meta in img_metas:
-            if img_meta['token'] in self.val_list:
-                return True
-        return False
+        self.val_list = [x.strip() for x in open(os.path.join(data_root, "ImageSets",  "val.txt")).readlines()]
 
     def forward(self, sweep_imgs, mats):
         return self.model(sweep_imgs, mats)
@@ -285,11 +279,7 @@ class BEVHeightLightningModel(LightningModule):
                 height_loss = self.get_height_loss(height_labels.cuda(), height_preds)
                 self.log('depth_loss', depth_loss)
                 self.log('height_loss', height_loss)
-                if self.is_inval(img_metas):
-                    return depth_loss + height_loss
-                else:
-                    return detection_loss + depth_loss + height_loss
-                    # return depth_loss + height_loss
+                return detection_loss + depth_loss + height_loss
         else:
             return detection_loss
 
@@ -456,7 +446,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'dair_12hz_infos_train.pkl'),
+            info_path=os.path.join(data_root, 'waymo-kitti_12hz_infos_train.pkl'),
             is_train=True,
             use_cbgs=self.data_use_cbgs,
             img_conf=self.img_conf,
@@ -484,7 +474,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'dair_12hz_infos_val.pkl'),
+            info_path=os.path.join(data_root, 'waymo-kitti_12hz_infos_val.pkl'),
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,
@@ -518,19 +508,14 @@ def main(args: Namespace) -> None:
     print(args)
     
     model = BEVHeightLightningModel(**vars(args))
-    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_height_lss_r50_864_1536_128x128/checkpoints', filename='{epoch}', every_n_epochs=5, save_last=True, save_top_k=-1)
+    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_height_lss_r101_384_1280_256x256/checkpoints', filename='{epoch}', every_n_epochs=5, save_last=True, save_top_k=-1)
     trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback])
     if args.evaluate:
         for ckpt_name in os.listdir(args.ckpt_path):
             model_pth = os.path.join(args.ckpt_path, ckpt_name)
             trainer.test(model, ckpt_path=model_pth)
     else:
-        backup_codebase(os.path.join('./outputs/bev_height_lss_r50_864_1536_128x128', 'backup'))
-        '''
-        if os.path.exists("pretrain_ckpt/last.ckpt"):
-            print("load checkpoints")
-            model = BEVHeightLightningModel.load_from_checkpoint("pretrain_ckpt/last.ckpt")
-        '''
+        backup_codebase(os.path.join('./outputs/bev_height_lss_r101_384_1280_256x256', 'backup'))
         trainer.fit(model)
         
 def run_cli():
@@ -551,14 +536,14 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=60,
+        max_epochs=50,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
         limit_val_batches=0,
         enable_checkpointing=True,
         precision=32,
-        default_root_dir='./outputs/bev_height_lss_r50_864_1536_128x128')
+        default_root_dir='./outputs/bev_height_lss_r101_384_1280_256x256')
     args = parser.parse_args()
     main(args)
 

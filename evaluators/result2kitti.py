@@ -67,12 +67,13 @@ def kitti_evaluation(pred_label_path, gt_label_path, current_classes=["Car", "Pe
     gt_annos = kitti.get_label_annos(gt_label_path, image_ids=image_ids)
     print(len(pred_annos), len(gt_annos))
     result, ret_dict = kitti_eval(gt_annos, pred_annos, current_classes=current_classes, metric="R40")
+    '''
     mAP_3d_moderate = ret_dict["KITTI/Car_3D_moderate_strict"]
     os.makedirs(os.path.join(metric_path, "R40"), exist_ok=True)
     with open(os.path.join(metric_path, "R40", 'epoch_result_{}.txt'.format(round(mAP_3d_moderate, 2))), "w") as f:
         f.write(result)
+    '''
     print(result)
-    return mAP_3d_moderate
 
 def write_kitti_in_txt(pred_lines, path_txt):
     wf = open(path_txt, "w")
@@ -110,6 +111,8 @@ def get_camera_3d_8points(obj_size, yaw_lidar, center_lidar, center_in_cam, r_ve
         ]
     )
     corners_3d_lidar = liadr_r * corners_3d_lidar + np.matrix(center_lidar).T
+    if len(t_velo2cam.shape) == 1:
+        t_velo2cam = t_velo2cam[:, np.newaxis]
     corners_3d_cam = r_velo2cam * corners_3d_lidar + t_velo2cam
     
     x0, z0 = corners_3d_cam[0, 0], corners_3d_cam[2, 0]
@@ -227,7 +230,6 @@ def result2kitti_dair(results_file, results_path, dair_root, gt_label_path, demo
                 obj_size, yaw_lidar, bottom_center, bottom_center_in_cam, r_velo2cam, t_velo2cam
             )
             yaw  = 0.5 * np.pi - yaw_lidar
-
             cam_x, cam_y, cam_z = convert_point(np.array([x, y, z, 1]).T, Tr_velo_to_cam)
             box = get_lidar_3d_8points([w, l, h], yaw_lidar, [x, y, z + h/2])
             box2d = bbbox2bbox(box, Tr_velo_to_cam, camera_intrinsic)
@@ -344,11 +346,11 @@ def result2kitti(results_file, results_path, kitti_root, gt_label_path, demo=Fal
             detection_score = pred["detection_score"]
             class_name = pred["detection_name"]
             w, l, h = dim[0], dim[1], dim[2]
-            x, y, z = loc[0], loc[1], loc[2]            
-            yaw  = 0.5 * np.pi - yaw_lidar
-            cam_x, cam_y, cam_z = convert_point(np.array([x, y, z, 1]).T, Tr_velo2cam)
-            box = get_lidar_3d_8points([w, l, h], yaw_lidar, [x, y, z + h/2])
+            x, y, z = loc[0], loc[1], loc[2]
 
+            cam_x, cam_y, cam_z = convert_point(np.array([x, y, z, 1]).T, Tr_velo2cam)
+            yaw  = 0.5 * np.pi - yaw_lidar
+            box = get_lidar_3d_8points([w, l, h], yaw_lidar, [x, y, z + h/2])
             box2d = bbbox2bbox(box, Tr_velo2cam, P2, img_size=[1280, 384])
             if detection_score > 0.25 and class_name in category_map_kitti.keys():
                 i1 = category_map_kitti[class_name]
@@ -381,4 +383,4 @@ if __name__ == "__main__":
     results_path = "outputs"
     data_root = "data/kitti"
     gt_label_path = "data/kitti/training/label_2"
-    # pred_label_path = result2kitti(result_files, results_path, data_root, gt_label_path, demo=True)
+    pred_label_path = result2kitti(result_files, results_path, data_root, gt_label_path, demo=True)
