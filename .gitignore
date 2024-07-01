@@ -3,7 +3,9 @@ hub/
 data/
 data/kitti
 build/
+kitti_demo/
 BEVHeight.egg-info/
 pretrain_ckpt/
+*.out
 *.pyc
 *.so

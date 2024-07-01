@@ -15,8 +15,8 @@ from scripts.gen_info_kitti import load_calib_kitti
 
 from scipy.spatial.transform import Rotation as R
 
-category_map_kitti = {"car": "Car", "van": "Car", "truck": "Truck", "bus": "Bus", "pedestrian": "Pedestrian", "bicycle": "Cyclist"}
 category_map_dair = {"car": "Car", "van": "Car", "truck": "Car", "bus": "Car", "pedestrian": "Pedestrian", "bicycle": "Cyclist", "trailer": "Cyclist", "motorcycle": "Cyclist"}
+category_map_kitti = {"car": "Car", "van": "Car", "truck": "Truck", "bus": "Bus", "pedestrian": "Pedestrian", "bicycle": "Cyclist"}
 category_map_rope3d = {"car": "Car", "van": "Car", "truck": "Bus", "bus": "Bus", "pedestrian": "Pedestrian", "bicycle": "Cyclist", "trailer": "Cyclist", "motorcycle": "Cyclist"}
 
 def get_lidar_3d_8points(obj_size, yaw_lidar, center_lidar):
@@ -330,12 +330,18 @@ def result2kitti(results_file, results_path, kitti_root, gt_label_path, demo=Fal
     with open(results_file,'r',encoding='utf8')as fp:
         results = json.load(fp)["results"]
     for sample_token in tqdm(results.keys()):
-        sample_id = int(sample_token)
-        src_calib_file = os.path.join(kitti_root, "training/calib", sample_token + ".txt")
+        sample_id = int(sample_token.split('/')[1]) if '/' in sample_token else int(sample_token)
+        src_calib_file = os.path.join(kitti_root, "training/calib", "{:06d}".format(sample_id) + ".txt")
         P2, r_velo2cam, t_velo2cam = load_calib_kitti(src_calib_file)
         Tr_velo2cam = np.eye(4)
         Tr_velo2cam[:3, :3], Tr_velo2cam[:3, 3] = r_velo2cam, t_velo2cam
-
+        
+        if "kitti" in kitti_root:
+            img_size = [1280, 384] 
+        elif "thutraf-i" in kitti_root:
+            img_size = [1536, 864]
+        elif "thutraf-v" in kitti_root:
+            img_size = [1920, 1080]
         preds = results[sample_token]
         pred_lines = []
         bboxes = []
@@ -351,7 +357,7 @@ def result2kitti(results_file, results_path, kitti_root, gt_label_path, demo=Fal
             cam_x, cam_y, cam_z = convert_point(np.array([x, y, z, 1]).T, Tr_velo2cam)
             yaw  = 0.5 * np.pi - yaw_lidar
             box = get_lidar_3d_8points([w, l, h], yaw_lidar, [x, y, z + h/2])
-            box2d = bbbox2bbox(box, Tr_velo2cam, P2, img_size=[1280, 384])
+            box2d = bbbox2bbox(box, Tr_velo2cam, P2, img_size=img_size)
             if detection_score > 0.25 and class_name in category_map_kitti.keys():
                 i1 = category_map_kitti[class_name]
                 i2 = str(0)

@@ -97,12 +97,12 @@ class RoadSideEvaluator():
                                                     jsonfile_prefix)
         print(result_files, tmp_dir)
         results_path = "outputs" 
-        if 'kitti' in self.data_root:
-            pred_label_path = result2kitti(result_files["img_bbox"], results_path, self.data_root, self.gt_label_path, demo=True)
-        elif 'dair' in self.data_root:
+        if 'dair' in self.data_root:
             pred_label_path = result2kitti_dair(result_files["img_bbox"], results_path, self.data_root, self.gt_label_path, demo=False)
         elif 'rope3d' in self.data_root:
             pred_label_path = result2kitti_rope3d(result_files["img_bbox"], results_path, self.data_root, self.gt_label_path, demo=False)
+        else:
+            pred_label_path = result2kitti(result_files["img_bbox"], results_path, self.data_root, self.gt_label_path, demo=True)
         kitti_evaluation(pred_label_path, self.gt_label_path, current_classes=self.current_classes, metric_path="outputs/metrics")
 
     def _format_bbox(self, results, img_metas, jsonfile_prefix=None):

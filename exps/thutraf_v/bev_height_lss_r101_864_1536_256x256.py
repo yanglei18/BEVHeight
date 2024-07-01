@@ -27,11 +27,11 @@ final_dim = (864, 1536)
 img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 img_std=[58.395, 57.12, 57.375],
                 to_rgb=True)
-model_type = 2 # 0: BEVDepth, 1: BEVHeight, 2: BEVHeight++
+model_type = 1 # 0: BEVDepth, 1: BEVHeight, 2: BEVHeight++
 
 return_depth = True
-data_root = "data/waymo-kitti/"
-gt_label_path = "data/waymo-kitti/training/label_2"
+data_root = "data/thutraf-v/"
+gt_label_path = "data/thutraf-v/training/label_2"
 bev_dim = 160 if model_type==2 else 80
  
 backbone_conf = {
@@ -97,25 +97,25 @@ bev_neck = dict(type='SECONDFPN',
 
 CLASSES = [
     'car',
-    # 'truck',
+    'truck',
     # 'construction_vehicle',
-    # 'bus',
+    'bus',
     # 'trailer',
     # 'barrier',
     # 'motorcycle',
-    # 'bicycle',
-    # 'pedestrian',
+    'bicycle',
+    'pedestrian',
     # 'traffic_cone',
 ]
 
 TASKS = [
     dict(num_class=1, class_names=['car']),
-    # dict(num_class=2, class_names=['truck', 'construction_vehicle']),
-    # dict(num_class=2, class_names=['bus', 'trailer']),
+    dict(num_class=1, class_names=['truck']),
+    dict(num_class=1, class_names=['bus']),
     # dict(num_class=1, class_names=['barrier']),
     # dict(num_class=2, class_names=['motorcycle', 'bicycle']),
-    # dict(num_class=2, class_names=['pedestrian', 'traffic_cone']),
-    # dict(num_class=1, class_names=['bicycle']),
+    dict(num_class=1, class_names=['pedestrian']),
+    dict(num_class=1, class_names=['bicycle']),
 ]
 
 common_heads = dict(reg=(2, 2),
@@ -225,6 +225,12 @@ class BEVHeightLightningModel(LightningModule):
         self.depth_channels = int((self.dbound[1] - self.dbound[0]) / self.dbound[2])
         self.val_list = [x.strip() for x in open(os.path.join(data_root, "ImageSets",  "val.txt")).readlines()]
 
+    def is_inval(self, img_metas):
+        for img_meta in img_metas:
+            if img_meta['token'].split("/")[1] in self.val_list:
+                return True            
+        return False
+
     def forward(self, sweep_imgs, mats):
         return self.model(sweep_imgs, mats)
 
@@ -279,7 +285,10 @@ class BEVHeightLightningModel(LightningModule):
                 height_loss = self.get_height_loss(height_labels.cuda(), height_preds)
                 self.log('depth_loss', depth_loss)
                 self.log('height_loss', height_loss)
-                return detection_loss + depth_loss + height_loss
+                if self.is_inval(img_metas):
+                    return depth_loss + height_loss
+                else:
+                    return detection_loss + depth_loss + height_loss
         else:
             return detection_loss
 
@@ -446,7 +455,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'waymo-waymo-kitti_12hz_infos_train.pkl'),
+            info_path=os.path.join(data_root, 'thutraf-v_12hz_infos_train.pkl'),
             is_train=True,
             use_cbgs=self.data_use_cbgs,
             img_conf=self.img_conf,
@@ -474,7 +483,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'waymo-waymo-kitti_12hz_infos_val.pkl'),
+            info_path=os.path.join(data_root, 'thutraf-v_12hz_infos_val.pkl'),
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,
@@ -508,14 +517,16 @@ def main(args: Namespace) -> None:
     print(args)
     
     model = BEVHeightLightningModel(**vars(args))
-    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_height_lss_r101_384_1280_256x256/checkpoints', filename='{epoch}', every_n_epochs=5, save_last=True, save_top_k=-1)
+    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_height_lss_r101_864_1536_256x256/checkpoints', filename='{epoch}', every_n_epochs=5, save_last=True, save_top_k=-1)
     trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback])
     if args.evaluate:
         for ckpt_name in os.listdir(args.ckpt_path):
             model_pth = os.path.join(args.ckpt_path, ckpt_name)
             trainer.test(model, ckpt_path=model_pth)
     else:
-        backup_codebase(os.path.join('./outputs/bev_height_lss_r101_384_1280_256x256', 'backup'))
+        backup_codebase(os.path.join('./outputs/bev_height_lss_r101_864_1536_256x256', 'backup'))
+        if os.path.exists("pretrain_ckpt/pretrain.ckpt"):
+            model = BEVHeightLightningModel.load_from_checkpoint("pretrain_ckpt/pretrain.ckpt")
         trainer.fit(model)
         
 def run_cli():
@@ -543,7 +554,7 @@ def run_cli():
         limit_val_batches=0,
         enable_checkpointing=True,
         precision=32,
-        default_root_dir='./outputs/bev_height_lss_r101_384_1280_256x256')
+        default_root_dir='./outputs/bev_height_lss_r101_864_1536_256x256')
     args = parser.parse_args()
     main(args)
 
