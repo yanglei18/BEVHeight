@@ -212,7 +212,7 @@ def generate_info_kitti(kitti_root, split='train'):
         ann_infos = list()
         P, r_velo2cam, t_velo2cam = sensor_params['CAM_FRONT']
         r_cam2velo, t_cam2velo = cam2velo(r_velo2cam, t_velo2cam)
-        annos = get_annos(label_file, r_cam2velo, t_cam2velo)
+        annos = get_annos(label_file, r_cam2velo, t_cam2velo) if os.path.exists(label_file) else list()
         for anno in annos:
             category_name = anno["name"]
             translation = anno["loc"]
@@ -244,39 +244,15 @@ def generate_info_kitti(kitti_root, split='train'):
 def main():
     parser = argparse.ArgumentParser(description="Create Dataset Infos in KITTI format ...")
     parser.add_argument("--data_root", type=str,
-                        default="data/thutraf-i",
+                        default="/data/THUTraf/THUTraf-I-Raw/",
                         help="Path to Dataset root in KITTI format")
     args = parser.parse_args()
 
     kitti_root = args.data_root # data/kitti  data/kitti-360  data/waymo-kitti
-    prefix = kitti_root.split('/')[-1]
+    prefix = kitti_root.split('/')[1]
     train_infos = generate_info_kitti(kitti_root, split='train')
-    val_infos = generate_info_kitti(kitti_root, split='val')
-    # test_infos = generate_info_kitti(kitti_root, split='test')
     
-    # with open(os.path.join(kitti_root, prefix + "_12hz_infos_train.pkl"), 'wb') as fid:        
-    #     pickle.dump(train_infos, fid)
-    # with open(os.path.join(kitti_root, prefix + "_12hz_infos_val.pkl"), 'wb') as fid:        
-    #     pickle.dump(val_infos, fid)
-    # with open(os.path.join(kitti_root, prefix + "_12hz_infos_test.pkl"), 'wb') as fid:        
-    #     pickle.dump(test_infos, fid)
-
-    with open(os.path.join(kitti_root, prefix + "_12hz_infos_train_het.pkl"), 'wb') as fid:        
+    with open(os.path.join(kitti_root, prefix + "_12hz_infos_raw_data.pkl"), 'wb') as fid:        
         pickle.dump(train_infos, fid)
-        
-    with open(os.path.join(kitti_root, prefix + "_12hz_infos_trainval_het.pkl"), 'wb') as fid:        
-        pickle.dump(train_infos + val_infos, fid)
-        
-    with open(os.path.join(kitti_root, prefix + "_12hz_infos_val_het.pkl"), 'wb') as fid:        
-        pickle.dump(val_infos, fid)
-    
-    total_infos = train_infos + val_infos
-    random.shuffle(total_infos)
-    with open(os.path.join(kitti_root, prefix + "_12hz_infos_train_hom.pkl"), 'wb') as fid:        
-        pickle.dump(total_infos[:int(0.8 * len(total_infos))], fid)
-    with open(os.path.join(kitti_root, prefix + "_12hz_infos_val_hom.pkl"), 'wb') as fid:
-        pickle.dump(total_infos[int(0.8 * len(total_infos)):], fid)
-    
-        
 if __name__ == '__main__':
     main()

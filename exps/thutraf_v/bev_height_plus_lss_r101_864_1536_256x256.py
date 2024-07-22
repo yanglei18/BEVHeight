@@ -223,7 +223,7 @@ class BEVHeightLightningModel(LightningModule):
         self.hbound = self.backbone_conf['h_bound']
         self.height_channels = int(self.hbound[2])
         self.depth_channels = int((self.dbound[1] - self.dbound[0]) / self.dbound[2])
-        self.val_list = [x.strip() for x in open(os.path.join(data_root, "ImageSets",  "val.txt")).readlines()]
+        self.val_list = [x.strip() for x in open(os.path.join(data_root, "ImageSets",  "test.txt")).readlines()]
 
     def is_inval(self, img_metas):
         for img_meta in img_metas:
@@ -285,10 +285,7 @@ class BEVHeightLightningModel(LightningModule):
                 height_loss = self.get_height_loss(height_labels.cuda(), height_preds)
                 self.log('depth_loss', depth_loss)
                 self.log('height_loss', height_loss)
-                if self.is_inval(img_metas):
-                    return depth_loss + height_loss
-                else:
-                    return detection_loss + depth_loss + height_loss
+                return detection_loss + depth_loss + height_loss
         else:
             return detection_loss
 
@@ -455,7 +452,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'thutraf-v_12hz_infos_train.pkl'),
+            info_path=os.path.join(data_root, 'thutraf-v_12hz_infos_trainval_het.pkl'),
             is_train=True,
             use_cbgs=self.data_use_cbgs,
             img_conf=self.img_conf,
@@ -483,7 +480,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'thutraf-v_12hz_infos_val.pkl'),
+            info_path=os.path.join(data_root, 'thutraf-v_12hz_infos_val_het.pkl'),
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,

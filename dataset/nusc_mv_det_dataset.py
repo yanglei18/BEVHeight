@@ -212,6 +212,18 @@ def depth_transform(cam_depth, resize, resize_dims, crop, flip, rotate):
 
     return depth_map
 
+def get_depth_map(cam_depth, dims):
+    depth_coords = cam_depth[:, :2].astype(np.int16)
+    depth_map = np.zeros(dims)
+    valid_mask = ((depth_coords[:, 1] < dims[0])
+                  & (depth_coords[:, 0] < dims[1])
+                  & (depth_coords[:, 1] >= 0)
+                  & (depth_coords[:, 0] >= 0))
+    depth_map[depth_coords[valid_mask, 1],
+              depth_coords[valid_mask, 0]] = cam_depth[valid_mask, 2]
+
+    return depth_map
+
 
 def map_pointcloud_to_image(
     lidar_points,
@@ -253,7 +265,8 @@ class NuscMVDetDataset(Dataset):
                                to_rgb=True),
                  return_depth=False,
                  sweep_idxes=list(),
-                 key_idxes=list()):
+                 key_idxes=list(),
+                 load_dim=4):
         """Dataset used for bevdetection task.
         Args:
             ida_aug_conf (dict): Config for ida augmentation.
@@ -297,6 +310,16 @@ class NuscMVDetDataset(Dataset):
         self.ratio_range = [1.0, 0.20]
         self.roll_range = [0.0, 2.00]
         self.pitch_range = [0.0, 0.67]
+        
+    def is_img_aug(self,):
+        if not self.return_depth:
+            return True
+        elif "waymo" in self.data_root:
+            return False
+        elif "thutraf" in self.data_root:
+            return False
+        else: 
+            return True
 
     def _get_sample_indices(self):
         """Load annotations from ann_file.
@@ -459,8 +482,11 @@ class NuscMVDetDataset(Dataset):
                 rotate_ida = self.sample_ida_augmentation(
                     )
             for sweep_idx, cam_info in enumerate(cam_infos):
-                img = Image.open(
-                    os.path.join(self.data_root, cam_info[cam]['filename']))
+                if "waymo" in self.data_root:
+                    img = cv2.imread(os.path.join(self.data_root, cam_info[cam]['filename']))
+                    img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+                else:
+                    img = Image.open(os.path.join(self.data_root, cam_info[cam]['filename']))
                 if "rotation_matrix" in cam_info[cam]['calibrated_sensor'].keys():
                     sweepsensor2sweepego_rot = torch.Tensor(cam_info[cam]['calibrated_sensor']['rotation_matrix'])
                 else:
@@ -498,7 +524,7 @@ class NuscMVDetDataset(Dataset):
                         cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 data_augmentation = False
-                if self.is_train and random.random() < 0.5:
+                if self.is_train and random.random() < 0.5 and self.is_img_aug():
                     data_augmentation = True
                     intrin_mat, sweepego2sweepsensor, ratio, roll, transform_pitch = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
                     img = img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat.numpy())
@@ -556,19 +582,35 @@ class NuscMVDetDataset(Dataset):
                     height = height[mask]
                     point_depth = np.concatenate([pts_img[:2, :].T, depth[:, None]], axis=1).astype(np.float32)
                     point_height = np.concatenate([pts_img[:2, :].T, height[:, None]], axis=1).astype(np.float32)
-                    point_depth_augmented = depth_transform(
-                        point_depth, resize, self.ida_aug_conf['final_dim'], crop, flip, rotate_ida)
-                    point_height_augmented = depth_transform(
-                        point_height, resize, self.ida_aug_conf['final_dim'], crop, flip, rotate_ida)
+                       
+                    point_depth_augmented = get_depth_map(point_depth, (self.ida_aug_conf['H'], self.ida_aug_conf['W']))
+                    point_height_augmented = get_depth_map(point_height, (self.ida_aug_conf['H'], self.ida_aug_conf['W']))
+                    point_depth_augmented = Image.fromarray(point_depth_augmented)
+                    point_height_augmented = Image.fromarray(point_height_augmented)
                     if data_augmentation:
-                        point_depth_augmented = Image.fromarray(point_depth_augmented)
-                        point_height_augmented = Image.fromarray(point_height_augmented)
                         point_depth_augmented = img_intrin_extrin_transform(point_depth_augmented, ratio, roll, transform_pitch, intrin_mat.numpy(), fillcolor=0)
                         point_height_augmented = img_intrin_extrin_transform(point_height_augmented, ratio, roll, transform_pitch, intrin_mat.numpy(), fillcolor=10)
-                        point_depth_augmented = np.array(point_depth_augmented)
-                        point_height_augmented = np.array(point_height_augmented)
-                        point_depth_augmented = point_depth_augmented if len(point_depth_augmented.shape) == 2 else point_depth_augmented[:,:,0]
-                        point_height_augmented = point_height_augmented if len(point_height_augmented.shape) == 2 else point_height_augmented[:,:,0]
+    
+                    point_depth_augmented, _ = img_transform(
+                        point_depth_augmented,
+                        resize=resize,
+                        resize_dims=resize_dims,
+                        crop=crop,
+                        flip=flip,
+                        rotate=rotate_ida,
+                    )
+                    point_height_augmented, _ = img_transform(
+                        point_height_augmented,
+                        resize=resize,
+                        resize_dims=resize_dims,
+                        crop=crop,
+                        flip=flip,
+                        rotate=rotate_ida,
+                    )                                        
+                    point_depth_augmented = np.array(point_depth_augmented)
+                    point_height_augmented = np.array(point_height_augmented)
+                    point_depth_augmented = point_depth_augmented if len(point_depth_augmented.shape) == 2 else point_depth_augmented[:,:,0]
+                    point_height_augmented = point_height_augmented if len(point_height_augmented.shape) == 2 else point_height_augmented[:,:,0]
                     gt_depth.append(torch.Tensor(point_depth_augmented))
                     gt_height.append(torch.Tensor(point_height_augmented))
 
@@ -580,6 +622,19 @@ class NuscMVDetDataset(Dataset):
                     flip=flip,
                     rotate=rotate_ida,
                 )
+                '''
+                image = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
+                color_map = cv2.applyColorMap(np.arange(256, dtype=np.uint8), cv2.COLORMAP_JET)
+                for i in range(point_depth_augmented.shape[0]):
+                    for j in range(point_depth_augmented.shape[1]):
+                        dis = (point_depth_augmented[i,j] - 1)
+                        if dis < 0: continue
+                        dis = min(int(dis), 100)
+                        color = tuple(color_map[dis, 0].astype(np.uint8))
+                        image = cv2.circle(image, (j, i), 2, (int(color[0]), int(color[1]), int(color[2])), -1)
+                cv2.imwrite("debug.jpg", image)
+                print(point_depth_augmented.shape, image.shape)
+                '''
                 ida_mats.append(ida_mat)
                 img = mmcv.imnormalize(np.array(img), self.img_mean,
                                        self.img_std, self.to_rgb)

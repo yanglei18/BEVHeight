@@ -39,7 +39,7 @@ backbone_conf = {
     'y_bound': [-51.2, 51.2, 0.4],
     'z_bound': [-5, 3, 8],
     'd_bound': [1.0, 102.0, 0.5],
-    'h_bound': [-2.0, 0.0, 80],
+    'h_bound': [-4.0, 0.0, 80],  # [-2.0, 0.0, 80]
     'model_type': model_type,
     'final_dim':
     final_dim,
@@ -224,13 +224,6 @@ class BEVHeightLightningModel(LightningModule):
         self.hbound = self.backbone_conf['h_bound']
         self.height_channels = int(self.hbound[2])
         self.depth_channels = int((self.dbound[1] - self.dbound[0]) / self.dbound[2])
-        self.val_list = [x.strip() for x in open(os.path.join(data_root, "ImageSets",  "val.txt")).readlines()]
-
-    def is_inval(self, img_metas):
-        for img_meta in img_metas:
-            if img_meta['token'].split("/")[1] in self.val_list:
-                return True            
-        return False
 
     def forward(self, sweep_imgs, mats):
         return self.model(sweep_imgs, mats)
@@ -286,10 +279,7 @@ class BEVHeightLightningModel(LightningModule):
                 height_loss = self.get_height_loss(height_labels.cuda(), height_preds)
                 self.log('depth_loss', depth_loss)
                 self.log('height_loss', height_loss)
-                if self.is_inval(img_metas):
-                    return depth_loss + height_loss
-                else:
-                    return detection_loss + depth_loss + height_loss
+                return detection_loss + depth_loss + height_loss
         else:
             return detection_loss
 
@@ -456,7 +446,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'thutraf-i_12hz_infos_train.pkl'),
+            info_path=os.path.join(data_root, 'THUTraf-I_12hz_infos_train_hom.pkl'),
             is_train=True,
             use_cbgs=self.data_use_cbgs,
             img_conf=self.img_conf,
@@ -484,7 +474,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'thutraf-i_12hz_infos_train.pkl'),
+            info_path=os.path.join(data_root, 'THUTraf-I_12hz_infos_val_hom.pkl'),
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,
@@ -518,14 +508,14 @@ def main(args: Namespace) -> None:
     print(args)
     
     model = BEVHeightLightningModel(**vars(args))
-    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_height_lss_r101_384_1280_256x256/checkpoints', filename='{epoch}', every_n_epochs=5, save_last=True, save_top_k=-1)
+    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_height_lss_r101_864_1536_256x256_thutraf_i/checkpoints', filename='{epoch}', every_n_epochs=5, save_last=True, save_top_k=-1)
     trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback])
     if args.evaluate:
         for ckpt_name in os.listdir(args.ckpt_path):
             model_pth = os.path.join(args.ckpt_path, ckpt_name)
             trainer.test(model, ckpt_path=model_pth)
     else:
-        backup_codebase(os.path.join('./outputs/bev_height_lss_r101_384_1280_256x256', 'backup'))
+        backup_codebase(os.path.join('./outputs/bev_height_lss_r101_864_1536_256x256_thutraf_i', 'backup'))
         if os.path.exists("pretrain_ckpt/pretrain.ckpt"):
             model = BEVHeightLightningModel.load_from_checkpoint("pretrain_ckpt/pretrain.ckpt")
         trainer.fit(model)
@@ -555,7 +545,7 @@ def run_cli():
         limit_val_batches=0,
         enable_checkpointing=True,
         precision=32,
-        default_root_dir='./outputs/bev_height_lss_r101_384_1280_256x256')
+        default_root_dir='./outputs/bev_height_lss_r101_864_1536_256x256_thutraf_i')
     args = parser.parse_args()
     main(args)
 

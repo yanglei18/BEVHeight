@@ -1,4 +1,10 @@
 outputs/
+outputs_backup/
+outputs
+kitt_demo/
+toy_data_demo/
+toy_data/
+outputs/
 hub/
 data/
 data/kitti

@@ -67,12 +67,10 @@ def kitti_evaluation(pred_label_path, gt_label_path, current_classes=["Car", "Pe
     gt_annos = kitti.get_label_annos(gt_label_path, image_ids=image_ids)
     print(len(pred_annos), len(gt_annos))
     result, ret_dict = kitti_eval(gt_annos, pred_annos, current_classes=current_classes, metric="R40")
-    '''
     mAP_3d_moderate = ret_dict["KITTI/Car_3D_moderate_strict"]
     os.makedirs(os.path.join(metric_path, "R40"), exist_ok=True)
     with open(os.path.join(metric_path, "R40", 'epoch_result_{}.txt'.format(round(mAP_3d_moderate, 2))), "w") as f:
         f.write(result)
-    '''
     print(result)
 
 def write_kitti_in_txt(pred_lines, path_txt):
@@ -332,16 +330,22 @@ def result2kitti(results_file, results_path, kitti_root, gt_label_path, demo=Fal
     for sample_token in tqdm(results.keys()):
         sample_id = int(sample_token.split('/')[1]) if '/' in sample_token else int(sample_token)
         src_calib_file = os.path.join(kitti_root, "training/calib", "{:06d}".format(sample_id) + ".txt")
+        if "waymo-kitti" in kitti_root:
+            src_calib_file = src_calib_file.replace("training", "validation")
         P2, r_velo2cam, t_velo2cam = load_calib_kitti(src_calib_file)
         Tr_velo2cam = np.eye(4)
         Tr_velo2cam[:3, :3], Tr_velo2cam[:3, 3] = r_velo2cam, t_velo2cam
         
-        if "kitti" in kitti_root:
-            img_size = [1280, 384] 
-        elif "thutraf-i" in kitti_root:
+        
+        if "thutraf-i" in kitti_root:
             img_size = [1536, 864]
         elif "thutraf-v" in kitti_root:
             img_size = [1920, 1080]
+        elif "waymo-kitti" in kitti_root:
+            img_size = [1920, 1280]
+        elif "kitti" in kitti_root:
+            img_size = [1280, 384] 
+
         preds = results[sample_token]
         pred_lines = []
         bboxes = []

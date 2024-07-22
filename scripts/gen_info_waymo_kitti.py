@@ -73,51 +73,26 @@ def load_calib_kitti(calib_file):
         reader = csv.reader(csv_file, delimiter=' ')
         P2, R0_rect, Tr_velo2cam = None, None, None
         for line, row in enumerate(reader):
-            if row[0] == 'P1:':
-                P1 = row[1:]
-                P1 = [float(i) for i in P1]
-                P1 = np.array(P1, dtype=np.float32).reshape(3, 4)
-                continue
             if row[0] == 'P2:':
                 P2 = row[1:]
                 P2 = [float(i) for i in P2]
                 P2 = np.array(P2, dtype=np.float32).reshape(3, 4)
-                continue
-            if row[0] == 'P3:':
-                P3 = row[1:]
-                P3 = [float(i) for i in P3]
-                P3 = np.array(P3, dtype=np.float32).reshape(3, 4)
                 continue
             elif row[0] == 'R0_rect:':
                 R0_rect = row[1:]
                 R0_rect = [float(i) for i in R0_rect]
                 R0_rect = np.array(R0_rect, dtype=np.float32).reshape(3, 3)
                 continue
-            elif row[0] == 'Tr_velo_to_cam1:':
-                Tr_velo2cam1 = row[1:]
-                Tr_velo2cam1 = [float(i) for i in Tr_velo2cam1]
-                Tr_velo2cam1 = np.array(Tr_velo2cam1, dtype=np.float32).reshape(3, 4)
-                continue
             elif row[0] == 'Tr_velo_to_cam:':
-                Tr_velo2cam2 = row[1:]
-                Tr_velo2cam2 = [float(i) for i in Tr_velo2cam2]
-                Tr_velo2cam2 = np.array(Tr_velo2cam2, dtype=np.float32).reshape(3, 4)
-                continue
-            elif row[0] == 'Tr_velo_to_cam3:':
-                Tr_velo2cam3 = row[1:]
-                Tr_velo2cam3 = [float(i) for i in Tr_velo2cam3]
-                Tr_velo2cam3 = np.array(Tr_velo2cam3, dtype=np.float32).reshape(3, 4)
-                continue
+                Tr_velo2cam = row[1:]
+                Tr_velo2cam = [float(i) for i in Tr_velo2cam]
+                Tr_velo2cam = np.array(Tr_velo2cam, dtype=np.float32).reshape(3, 4)
+                break
         if R0_rect is not None:
-            Tr_velo2cam1 = np.matmul(R0_rect, Tr_velo2cam1)
-            Tr_velo2cam2 = np.matmul(R0_rect, Tr_velo2cam2)
-            Tr_velo2cam3 = np.matmul(R0_rect, Tr_velo2cam3)
-        sensor_params = {
-            "CAM_LEFT": (P1, Tr_velo2cam1[:3, :3], Tr_velo2cam1[:3, 3]),
-            "CAM_FRONT": (P2, Tr_velo2cam2[:3, :3], Tr_velo2cam2[:3, 3]), 
-            "CAM_RIGHT": (P3, Tr_velo2cam3[:3, :3], Tr_velo2cam3[:3, 3])
-        }
-    return sensor_params
+            Tr_velo2cam = np.matmul(R0_rect, Tr_velo2cam)
+
+        r_velo2cam, t_velo2cam = Tr_velo2cam[:3, :3], Tr_velo2cam[:3, 3]
+    return P2, r_velo2cam, t_velo2cam
 
 def get_annos(label_path, r_cam2velo, t_cam2velo):
     Tr_cam2velo = np.eye(4)
@@ -154,15 +129,17 @@ def get_annos(label_path, r_cam2velo, t_cam2velo):
     return annos
 
 def generate_info_kitti(kitti_root, split='train'):
-    src_dir = os.path.join(kitti_root, "training")
+    src_dir = os.path.join(kitti_root, "training") if split in ["train"] else os.path.join(kitti_root, "validation")
     label_path = os.path.join(src_dir, "label_2")
     calib_path = os.path.join(src_dir, "calib")
     split_txt = os.path.join(kitti_root, "ImageSets",  split + ".txt")
     idx_list = [x.strip() for x in open(split_txt).readlines()]
     infos = list()
+    min_h, max_h = 100, -100
+    total_count, valid_count = 0, 0  
     for idx in tqdm(range(len(idx_list))):
         index = idx_list[idx]
-        sample_token = "training/" + index
+        sample_token = "training/" + index if split in ["train"] else "validation/" + index
         label_file = os.path.join(label_path, index + ".txt")
         calib_file = os.path.join(calib_path, index + ".txt")
         
@@ -172,28 +149,27 @@ def generate_info_kitti(kitti_root, split='train'):
         info['timestamp'] = int(index)
         info['scene_token'] = index
         
-        cam_names = ['CAM_LEFT', 'CAM_FRONT', 'CAM_RIGHT']
-        img_path = {'CAM_LEFT': "image_1", 'CAM_FRONT': "image_2", 'CAM_RIGHT': "image_3"}
+        cam_names = ['CAM_FRONT']
         lidar_names = ['LIDAR_TOP']
         cam_infos, lidar_infos = dict(), dict()
-        sensor_params = load_calib_kitti(calib_file)
         for cam_name in cam_names:
             cam_info = dict()
             cam_info['sample_token'] = sample_token
             cam_info['timestamp'] = int(index)
             cam_info['is_key_frame'] = True
-            cam_info['height'] = 864
-            cam_info['width'] = 1536
-            cam_info['filename'] = os.path.join("training", img_path[cam_name], index + ".jpg")
+            cam_info['height'] = 1280
+            cam_info['width'] = 1920
+            cam_info['filename'] = os.path.join("training", "image_2", index + ".png") if split in ["train"] else os.path.join("validation", "image_2", index + ".png")
             ego_pose = {"translation": [0.0, 0.0, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "token": index, "timestamp": int(index)}
             cam_info['ego_pose'] = ego_pose
             
-            P, r_velo2cam, t_velo2cam = sensor_params[cam_name]
+            P2, r_velo2cam, t_velo2cam = load_calib_kitti(calib_file)
             r_cam2velo, t_cam2velo = cam2velo(r_velo2cam, t_velo2cam)
             Tr_cam2velo = np.eye(4)
             Tr_cam2velo[:3, :3], Tr_cam2velo[:3, 3] = r_cam2velo, t_cam2velo
             denorm = get_denorm(r_velo2cam, t_velo2cam)
-            calibrated_sensor = {"token": index, "sensor_token": index, "translation": t_cam2velo.flatten(), "rotation_matrix": r_cam2velo, "camera_intrinsic": P}
+
+            calibrated_sensor = {"token": index, "sensor_token": index, "translation": t_cam2velo.flatten(), "rotation_matrix": r_cam2velo, "camera_intrinsic": P2}
             cam_info['calibrated_sensor'] = calibrated_sensor
             cam_info['denorm'] = denorm
             cam_infos[cam_name] = cam_info
@@ -201,7 +177,7 @@ def generate_info_kitti(kitti_root, split='train'):
         for lidar_name in lidar_names:
             calibrated_sensor = {"token": index, "sensor_token": index, "translation": t_velo2cam.flatten(), "rotation_matrix": r_velo2cam}
             lidar_info = dict(
-                filename=os.path.join("training", "velodyne", index + ".bin"),
+                filename=os.path.join("training", "velodyne", index + ".bin") if split in ["train"] else os.path.join("validation", "velodyne", index + ".bin"),
                 calibrated_sensor=calibrated_sensor,
             )
             lidar_infos[lidar_name] = lidar_info
@@ -210,12 +186,17 @@ def generate_info_kitti(kitti_root, split='train'):
         info['lidar_infos'] = lidar_infos
         info['sweeps'] = list()
         ann_infos = list()
-        P, r_velo2cam, t_velo2cam = sensor_params['CAM_FRONT']
-        r_cam2velo, t_cam2velo = cam2velo(r_velo2cam, t_velo2cam)
-        annos = get_annos(label_file, r_cam2velo, t_cam2velo)
+        annos = get_annos(label_file, r_cam2velo, t_cam2velo) if split in ["train", "val"] else list()
         for anno in annos:
             category_name = anno["name"]
             translation = anno["loc"]
+            
+            if translation[2] > -5 and translation[2] < 3:
+                valid_count += 1
+            total_count += 1 
+            min_h = min(min_h, translation[2])
+            max_h = max(max_h, translation[2])
+            print(min_h, max_h, translation[2])
             size = anno["dim"]
             yaw_lidar = anno["rotation"]
             rot_mat = np.array([[math.cos(yaw_lidar), -math.sin(yaw_lidar), 0], 
@@ -239,44 +220,24 @@ def generate_info_kitti(kitti_root, split='train'):
             ann_infos.append(ann_info)
         info['ann_infos'] = ann_infos
         infos.append(info)
+    print(total_count, valid_count, valid_count/total_count)
     return infos
 
 def main():
     parser = argparse.ArgumentParser(description="Create Dataset Infos in KITTI format ...")
     parser.add_argument("--data_root", type=str,
-                        default="data/thutraf-i",
+                        default="data/waymo-kitti",
                         help="Path to Dataset root in KITTI format")
     args = parser.parse_args()
 
     kitti_root = args.data_root # data/kitti  data/kitti-360  data/waymo-kitti
-    prefix = kitti_root.split('/')[-1]
+    prefix = kitti_root.split('/')[1]
     train_infos = generate_info_kitti(kitti_root, split='train')
     val_infos = generate_info_kitti(kitti_root, split='val')
-    # test_infos = generate_info_kitti(kitti_root, split='test')
-    
-    # with open(os.path.join(kitti_root, prefix + "_12hz_infos_train.pkl"), 'wb') as fid:        
-    #     pickle.dump(train_infos, fid)
-    # with open(os.path.join(kitti_root, prefix + "_12hz_infos_val.pkl"), 'wb') as fid:        
-    #     pickle.dump(val_infos, fid)
-    # with open(os.path.join(kitti_root, prefix + "_12hz_infos_test.pkl"), 'wb') as fid:        
-    #     pickle.dump(test_infos, fid)
+    with open(os.path.join(kitti_root, prefix + "_12hz_infos_train_mini.pkl"), 'wb') as fid:        
+        pickle.dump(random.sample(train_infos, 3000), fid)
+    with open(os.path.join(kitti_root, prefix + "_12hz_infos_val_mini.pkl"), 'wb') as fid:        
+        pickle.dump(random.sample(val_infos, 500), fid)
 
-    with open(os.path.join(kitti_root, prefix + "_12hz_infos_train_het.pkl"), 'wb') as fid:        
-        pickle.dump(train_infos, fid)
-        
-    with open(os.path.join(kitti_root, prefix + "_12hz_infos_trainval_het.pkl"), 'wb') as fid:        
-        pickle.dump(train_infos + val_infos, fid)
-        
-    with open(os.path.join(kitti_root, prefix + "_12hz_infos_val_het.pkl"), 'wb') as fid:        
-        pickle.dump(val_infos, fid)
-    
-    total_infos = train_infos + val_infos
-    random.shuffle(total_infos)
-    with open(os.path.join(kitti_root, prefix + "_12hz_infos_train_hom.pkl"), 'wb') as fid:        
-        pickle.dump(total_infos[:int(0.8 * len(total_infos))], fid)
-    with open(os.path.join(kitti_root, prefix + "_12hz_infos_val_hom.pkl"), 'wb') as fid:
-        pickle.dump(total_infos[int(0.8 * len(total_infos)):], fid)
-    
-        
 if __name__ == '__main__':
     main()
