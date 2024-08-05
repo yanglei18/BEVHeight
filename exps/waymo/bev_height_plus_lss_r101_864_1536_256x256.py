@@ -445,7 +445,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'waymo-kitti_12hz_infos_train_mini.pkl'),
+            info_path=os.path.join(data_root, 'waymo-kitti_12hz_infos_train.pkl'),
             is_train=True,
             use_cbgs=self.data_use_cbgs,
             img_conf=self.img_conf,
@@ -473,7 +473,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'waymo-kitti_12hz_infos_val_mini.pkl'),
+            info_path=os.path.join(data_root, 'waymo-kitti_12hz_infos_val.pkl'),
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,
@@ -507,7 +507,7 @@ def main(args: Namespace) -> None:
     print(args)
     
     model = BEVHeightLightningModel(**vars(args))
-    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_height_plus_lss_r101_864_1536_256x256/checkpoints', filename='{epoch}', every_n_epochs=5, save_last=True, save_top_k=-1)
+    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_height_plus_lss_r101_864_1536_256x256/checkpoints', filename='{epoch}', every_n_epochs=3, save_last=True, save_top_k=-1)
     trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback])
     if args.evaluate:
         for ckpt_name in os.listdir(args.ckpt_path):
@@ -535,7 +535,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=30,
+        max_epochs=35,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,

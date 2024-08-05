@@ -23,6 +23,15 @@ Download KITTI-360 dataset from official [website](https://www.cvlibs.net/datase
 ## Waymo
 Download Waymo dataset from official [website](https://waymo.com/open/download/).
 
+Convert Waymo to KITTI format
+
+BEVHeight
+├── data
+│   ├── waymo
+│   │   ├── train
+│   │   ├── validation
+
+
 ## nuScenes
 Download Waymo dataset from official [website](https://www.nuscenes.org/nuscenes#download/).
 ```

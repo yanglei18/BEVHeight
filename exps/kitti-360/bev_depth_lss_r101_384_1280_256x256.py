@@ -276,11 +276,17 @@ class BEVHeightLightningModel(LightningModule):
             if model_type == 0:
                 depth_loss = self.get_depth_loss(depth_labels.cuda(), depth_preds)
                 self.log('depth_loss', depth_loss)
-                return detection_loss + depth_loss
+                if self.is_inval(img_metas):
+                    return depth_loss
+                else:
+                    return detection_loss + depth_loss
             elif model_type == 1:
                 height_loss = self.get_height_loss(height_labels.cuda(), height_preds)
                 self.log('height_loss', height_loss)
-                return detection_loss + height_loss
+                if self.is_inval(img_metas):
+                    return height_loss
+                else:
+                    return detection_loss + height_loss
             elif model_type == 2:
                 depth_loss = self.get_depth_loss(depth_labels.cuda(), depth_preds)
                 height_loss = self.get_height_loss(height_labels.cuda(), height_preds)
@@ -456,7 +462,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'kitti-360_12hz_infos_train.pkl'),
+            info_path=os.path.join(data_root, 'kitti-360_12hz_infos_trainval.pkl'),
             is_train=True,
             use_cbgs=self.data_use_cbgs,
             img_conf=self.img_conf,

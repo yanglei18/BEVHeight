@@ -196,7 +196,6 @@ def generate_info_kitti(kitti_root, split='train'):
             total_count += 1 
             min_h = min(min_h, translation[2])
             max_h = max(max_h, translation[2])
-            print(min_h, max_h, translation[2])
             size = anno["dim"]
             yaw_lidar = anno["rotation"]
             rot_mat = np.array([[math.cos(yaw_lidar), -math.sin(yaw_lidar), 0], 
@@ -234,10 +233,10 @@ def main():
     prefix = kitti_root.split('/')[1]
     train_infos = generate_info_kitti(kitti_root, split='train')
     val_infos = generate_info_kitti(kitti_root, split='val')
-    with open(os.path.join(kitti_root, prefix + "_12hz_infos_train_mini.pkl"), 'wb') as fid:        
-        pickle.dump(random.sample(train_infos, 3000), fid)
-    with open(os.path.join(kitti_root, prefix + "_12hz_infos_val_mini.pkl"), 'wb') as fid:        
-        pickle.dump(random.sample(val_infos, 500), fid)
+    with open(os.path.join(kitti_root, prefix + "_12hz_infos_train.pkl"), 'wb') as fid:        
+        pickle.dump(train_infos, fid)
+    with open(os.path.join(kitti_root, prefix + "_12hz_infos_val.pkl"), 'wb') as fid:        
+        pickle.dump(val_infos, fid)
 
 if __name__ == '__main__':
     main()

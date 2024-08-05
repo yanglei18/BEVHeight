@@ -29,9 +29,9 @@ img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 to_rgb=True)
 model_type = 1 # 0: BEVDepth, 1: BEVHeight, 2: BEVHeight++
 
-return_depth = True
+return_depth = False
 data_root = "data/thutraf-i/"
-gt_label_path = "data/thutraf-i/training/label_2"
+gt_label_path = "data/thutraf-i/training/label_rectified"
 bev_dim = 160 if model_type==2 else 80
  
 backbone_conf = {
@@ -446,7 +446,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'THUTraf-I_12hz_infos_train_hom.pkl'),
+            info_path=os.path.join(data_root, 'thutraf-i_12hz_infos_train_het.pkl'),
             is_train=True,
             use_cbgs=self.data_use_cbgs,
             img_conf=self.img_conf,
@@ -474,7 +474,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'THUTraf-I_12hz_infos_val_hom.pkl'),
+            info_path=os.path.join(data_root, 'thutraf-i_12hz_infos_train_het.pkl'),
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,
@@ -538,7 +538,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=50,
+        max_epochs=40,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,

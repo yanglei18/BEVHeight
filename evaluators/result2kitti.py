@@ -335,10 +335,13 @@ def result2kitti(results_file, results_path, kitti_root, gt_label_path, demo=Fal
         P2, r_velo2cam, t_velo2cam = load_calib_kitti(src_calib_file)
         Tr_velo2cam = np.eye(4)
         Tr_velo2cam[:3, :3], Tr_velo2cam[:3, 3] = r_velo2cam, t_velo2cam
-        
-        
+        Tr_velo2cam_bbox = Tr_velo2cam.copy()
         if "thutraf-i" in kitti_root:
             img_size = [1536, 864]
+            # img_size = [3500, 864]
+            # P2[0, 2] = 1725
+            # Tr_velo2cam_bbox[:3, 3] = np.array([0.032651, 3.229831, 40.107632])
+               
         elif "thutraf-v" in kitti_root:
             img_size = [1920, 1080]
         elif "waymo-kitti" in kitti_root:
@@ -355,25 +358,30 @@ def result2kitti(results_file, results_path, kitti_root, gt_label_path, demo=Fal
             yaw_lidar = pred["box_yaw"]
             detection_score = pred["detection_score"]
             class_name = pred["detection_name"]
-            w, l, h = dim[0], dim[1], dim[2]
+            l, w, h = dim[0], dim[1], dim[2]
             x, y, z = loc[0], loc[1], loc[2]
 
             cam_x, cam_y, cam_z = convert_point(np.array([x, y, z, 1]).T, Tr_velo2cam)
             yaw  = 0.5 * np.pi - yaw_lidar
-            box = get_lidar_3d_8points([w, l, h], yaw_lidar, [x, y, z + h/2])
-            box2d = bbbox2bbox(box, Tr_velo2cam, P2, img_size=img_size)
+            box = get_lidar_3d_8points([l, w, h], yaw_lidar, [x, y, z + h/2])
+            alpha, _ = get_camera_3d_8points(
+                [l, w, h], yaw_lidar, loc, [cam_x, cam_y, cam_z], r_velo2cam, t_velo2cam
+            )
+            
+            box2d = bbbox2bbox(box, Tr_velo2cam_bbox, P2, img_size=img_size)
             if detection_score > 0.25 and class_name in category_map_kitti.keys():
                 i1 = category_map_kitti[class_name]
                 i2 = str(0)
                 i3 = str(0)
-                i4 = str(round(0.0, 4))
+                i4 = str(round(alpha, 4))
                 i5, i6, i7, i8 = (
                     str(round(box2d[0], 4)),
                     str(round(box2d[1], 4)),
                     str(round(box2d[2], 4)),
                     str(round(box2d[3], 4)),
                 )
-                i9, i11, i10 = str(round(h, 4)), str(round(w, 4)), str(round(l, 4))
+                # h w l
+                i9, i10, i11 = str(round(h, 4)), str(round(w, 4)), str(round(l, 4))
                 i12, i13, i14 = str(round(cam_x, 4)), str(round(cam_y, 4)), str(round(cam_z, 4))
                 i15 = str(round(yaw, 4))
                 line = [i1, i2, i3, i4, i5, i6, i7, i8, i9, i10, i11, i12, i13, i14, i15, str(round(detection_score, 4))]

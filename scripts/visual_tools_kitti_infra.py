@@ -9,9 +9,8 @@ color_map = {"Car":(0, 255, 0), "Bus":(0, 255, 255), "Pedestrian":(255, 255, 0),
 
 def parse_option():
     parser = argparse.ArgumentParser('Visualize InfrastructureSide dataset', add_help=False)
-    parser.add_argument('--kitti_root', type=str, default='data/kitti', help='root path to KITTI Dataset')
-    parser.add_argument('--pred_path', type=str, default=None, help='path to predictions')
-    parser.add_argument('--demo_path', type=str, default='kitt_demo', help='')    
+    parser.add_argument('--kitti_root', type=str, default='data/thutraf-i', help='root path to KITTI Dataset')
+    parser.add_argument('--demo_path', type=str, default='kitt_demo_infra', help='')    
     args = parser.parse_args()
     return args
 
@@ -38,6 +37,30 @@ def get_denorm(Tr_velo_to_cam):
     denorm = -1 * equation_plane(ground_points_cam)
     return denorm
 
+def alpha2roty(alpha, pos):
+    ry = alpha + np.arctan2(pos[0], pos[2])
+    if ry > np.pi:
+        ry -= 2 * np.pi
+    if ry < -np.pi:
+        ry += 2 * np.pi
+    return ry
+
+def clip2pi(ry):
+    if ry > 2 * np.pi:
+        ry -= 2 * np.pi
+    if ry < - 2* np.pi:
+        ry += 2 * np.pi
+    return ry
+
+def cam2velo(r_velo2cam, t_velo2cam):
+    Tr_velo2cam = np.eye(4)
+    Tr_velo2cam[:3, :3] = r_velo2cam
+    Tr_velo2cam[:3 ,3] = t_velo2cam.flatten()
+    Tr_cam2velo = np.linalg.inv(Tr_velo2cam)
+    r_cam2velo = Tr_cam2velo[:3, :3]
+    t_cam2velo = Tr_cam2velo[:3, 3]
+    return r_cam2velo, t_cam2velo
+
 def read_bin(path):
     points = np.fromfile(path, dtype=np.float32, count=-1).reshape([-1, 4])
     return points[:, :3] 
@@ -60,7 +83,7 @@ def lidar2camera_projection(image, points, sensor_params):
         image = cv2.circle(image, (coor[id][0], coor[id][1]), 2, (int(color[0]), int(color[1]), int(color[2])), -1)
     return image
 
-def get_bev_image(points, c=(255, 0, 0), r=1, range_list = [(-80.6, 80.6), (-64.8, 64.8), (-2.0, -2.0), 0.12]):
+def get_bev_image(points, c=(255, 0, 0), r=1, range_list = [(-80.6, 80.6), (-70.6, 70.6), (-2.0, -2.0), 0.10]):
     points_filter = PointCloudFilter(side_range=range_list[0], fwd_range=range_list[1], res=range_list[-1])
     bev_image = points_filter.get_bev_image(points, c, r)
     return bev_image
@@ -100,8 +123,33 @@ def compute_box_3d_camera(dim, location, rotation_y, denorm):
     rotation_matrix, j = cv2.Rodrigues(theta * n_vector_norm)
     corners_3d = np.dot(rotation_matrix, corners_3d)
     corners_3d = corners_3d + np.array(location, dtype=np.float32).reshape(3, 1)
-    
     return corners_3d.transpose(1, 0)
+
+def compute_box_3d(dim, yaw, loc):
+    l, w, h = dim
+    liadr_r = np.matrix(
+        [[math.cos(yaw), -math.sin(yaw), 0], 
+         [math.sin(yaw), math.cos(yaw), 0], 
+         [0, 0, 1]]
+    )
+    corners_3d = np.matrix([
+            [l / 2, l / 2, -l / 2, -l / 2, l / 2, l / 2, -l / 2, -l / 2],
+            [w / 2, -w / 2, -w / 2, w / 2, w / 2, -w / 2, -w / 2, w / 2],
+            [-h/2, -h/2, -h/2, -h/2, h/2, h/2, h/2, h/2],
+        ])
+    corners_3d = liadr_r * corners_3d + np.matrix(loc).T
+    return corners_3d.T
+
+def compute_box_3d_image(dim, yaw, loc, rmat, tvec, camera_matrix):
+    corners_3d = compute_box_3d(dim, yaw, loc)
+    corners_3d = np.concatenate((corners_3d, np.ones((corners_3d.shape[0], 1))), axis=1)
+    corners_3d = corners_3d.T
+    extrinsic_matrix = np.concatenate([rmat, tvec.reshape(3, 1)], axis=1)
+    corners_image = np.dot(np.dot(camera_matrix, extrinsic_matrix), corners_3d).T.reshape([-1, 3])
+    corners_image[:, 0] = corners_image[:, 0] / corners_image[:, 2]
+    corners_image[:, 1] = corners_image[:, 1] / corners_image[:, 2]
+    corners_image = corners_image[:, :3].astype(np.int32)
+    return corners_image
 
 def project_to_image(pts_3d, P):
     pts_3d_homo = np.concatenate(
@@ -124,38 +172,65 @@ def draw_box_3d(image, corners, c=(0, 255, 0)):
                 (int(corners[f[3], 0]), int(corners[f[3], 1])), c, 1, lineType=cv2.LINE_AA)
     return image
 
-def bbox2image_projection(image, annos, P2, denorm, c=(0,255,0)):
+def draw_box_3d_v2(image, corners, c=(0, 255, 0), alpha=0.75):
+    mask = np.zeros_like(image)
+    face_idx = [[0,1,5,4],[1,2,6,5],[2,3,7,6],[3,0,4,7]]
+    for ind_f in [3, 2, 1, 0]:
+      f = face_idx[ind_f]
+      polygon = np.array([[corners[f[j],0],corners[f[j],1]] for j in range(4)], dtype=np.int32)
+      cv2.fillPoly(mask, [polygon], c)
+
+      for j in [0, 1, 2, 3]:
+        cv2.line(image, (int(corners[f[j], 0]), int(corners[f[j], 1])),
+                 (int(corners[f[(j+1)%4], 0]), int(corners[f[(j+1)%4], 1])), c, 4, lineType=cv2.LINE_AA)
+      if ind_f == 0:
+        cv2.line(image, (int(corners[f[0], 0]), int(corners[f[0], 1])),
+                 (int(corners[f[2], 0]), int(corners[f[2], 1])), c, 4, lineType=cv2.LINE_AA)
+        cv2.line(image, (int(corners[f[1], 0]), int(corners[f[1], 1])),
+                 (int(corners[f[3], 0]), int(corners[f[3], 1])), c, 4, lineType=cv2.LINE_AA)
+    
+    result = cv2.addWeighted(image, 1, mask, 1 - alpha, 0)
+    return result
+
+def bbox2image_projection(image, annos, rmat, tvec, camera_matrix, trans=True):    
     for anno in annos:
         category, truncated, occulated = anno["class"], anno["truncated"], anno["occluded"]
-        loc, dim, rot_y = anno["loc"], anno["dim"], anno["rot_y"]
-        box_3d = compute_box_3d_camera(dim, loc, rot_y, denorm)
-        box_2d = project_to_image(box_3d, P2)
-        # if category not in color_map.keys(): continue
-        image = draw_box_3d(image, box_2d, c=c)
+        loc, dim, yaw = anno["loc"], anno["dim"], anno["rot_y"]
+        box_2d = compute_box_3d_image(dim, yaw, loc, rmat, tvec, camera_matrix)
+        center_image = np.mean(box_2d, axis=0)[0]
+        if int(center_image[0,0]) < 0 or int(center_image[0,0]) >= image.shape[1] or int(center_image[0, 1]) < 0 or int(center_image[0,1]) >= image.shape[0]: continue
+        if int(center_image[0,0]) < 0: continue 
+        
+        if category not in color_map.keys(): continue
+        draw_box = draw_box_3d_v2 if trans else draw_box_3d
+        if category == "Car":
+            image = draw_box(image, box_2d, c=(81, 105, 243))
+        elif category == "Pedestrian":
+            image = draw_box(image, box_2d, c=(249, 118, 233))
+        elif category == "Cyclist":
+            image = draw_box(image, box_2d, c=(255, 140, 177))
+        elif category == "Truck":
+            image = draw_box(image, box_2d, c=(185, 233, 63))
+        elif category == "Bus":
+            image = draw_box(image, box_2d, c=(110, 255, 238))
+        elif category == "Others":
+            image = draw_box(image, box_2d, c=(54, 207, 235))
+        else:     
+            image = draw_box(image, box_2d, c=(226, 43, 138))
     return image
 
-def bbox2lidar_projection(bev_image, annos, sensor_params, denorm, c=(0, 255, 0)):
-    rmat, tvec = sensor_params["rmat"], sensor_params["tvec"]
-    Tr_velo2cam = np.eye(4)
-    Tr_velo2cam[:3, :3] = rmat
-    Tr_velo2cam[:3, 3] = tvec
-    Tr_cam2velo = np.linalg.inv(Tr_velo2cam)
-    
-    range_list = [(-80.6, 80.6), (-64.8, 64.8), (-2.0, -2.0), 0.12]
+def bbox2lidar_projection(bev_image, annos, c=(84,46,0)):
+    range_list = [(-80.6, 80.6), (-70.6, 70.6), (-2.0, -2.0), 0.1]
     points_filter = PointCloudFilter(side_range=range_list[0], fwd_range=range_list[1], res=range_list[-1])
     for anno in annos:
-        category, truncated, occulated = anno["class"], anno["truncated"], anno["occluded"]
-        loc, dim, rot_y = anno["loc"], anno["dim"], anno["rot_y"]
-        box_3d_camera = compute_box_3d_camera(dim, loc, rot_y, denorm)
-        box_3d_camera_extend = np.concatenate((box_3d_camera, np.ones((box_3d_camera.shape[0], 1))), axis=1)
-        box_3d_camera_lidar = np.matmul(Tr_cam2velo, box_3d_camera_extend.T).T[:, :3]
-        box_3d = box_3d_camera_lidar
-        x_img, y_img = points_filter.pcl2xy_plane(box_3d[:, 0], box_3d[:, 1])
+        loc, dim, yaw = anno["loc"], anno["dim"], anno["rot_y"]
+        corners_3d = compute_box_3d(dim, yaw, loc)
+        x_img, y_img = points_filter.pcl2xy_plane(corners_3d[:, 0], corners_3d[:, 1])
         for i in np.arange(4):
-            cv2.line(bev_image, (x_img[0], y_img[0]), (x_img[1], y_img[1]), c, 3)
-            cv2.line(bev_image, (x_img[0], y_img[0]), (x_img[3], y_img[3]), c, 3)
-            cv2.line(bev_image, (x_img[1], y_img[1]), (x_img[2], y_img[2]), c, 3)
-            cv2.line(bev_image, (x_img[2], y_img[2]), (x_img[3], y_img[3]), c, 3)
+            cv2.line(bev_image, (x_img[0,0], y_img[0,0]), (x_img[1,0], y_img[1,0]), c, 3)
+            cv2.line(bev_image, (x_img[0,0], y_img[0,0]), (x_img[3,0], y_img[3,0]), c, 3)
+            cv2.line(bev_image, (x_img[1,0], y_img[1,0]), (x_img[2,0], y_img[2,0]), c, 3)
+            cv2.line(bev_image, (x_img[2,0], y_img[2,0]), (x_img[3,0], y_img[3,0]), c, 3)
     return bev_image
 
 class PointCloudFilter(object):
@@ -240,7 +315,7 @@ class PointCloudFilter(object):
         """
         x_max = 1 + int((self.side_range[1] - self.side_range[0]) / self.res)
         y_max = 1 + int((self.fwd_range[1] - self.fwd_range[0]) / self.res)
-        img = np.ones([y_max, x_max], dtype=np.uint8) * 255
+        img = np.ones([y_max, x_max], dtype=np.uint8) * 100
         return img
 
     def pcl2xy_plane(self, x_points, y_points):
@@ -269,7 +344,7 @@ class PointCloudFilter(object):
         x_img, y_img = self.pcl2xy_plane(x_points, y_points)
         bev_img = self.get_meshgrid()
         
-        bev_img[y_img, x_img] = 255
+        bev_img[y_img, x_img] = 100
         bev_img = cv2.merge([bev_img, bev_img, bev_img])
         
         if r > 1:
@@ -284,19 +359,24 @@ class PointCloudFilter(object):
         return bev_image
 
 class KITTIDataset:
-    def __init__(self, kitti_root, pred_path=None):
+    def __init__(self, kitti_root, split="val"):
         super(KITTIDataset, self).__init__()
         self.kitti_root = kitti_root
-        self.image_dir = os.path.join(kitti_root, "training", "image_2")
-        self.image3_dir = os.path.join(kitti_root, "training", "image_3")
+        self.split = split
+        self.image_1_dir = os.path.join(kitti_root, "training", "image_1")
+        self.image_2_dir = os.path.join(kitti_root, "training", "image_2")
+        self.image_3_dir = os.path.join(kitti_root, "training", "image_3")
+        
+        self.label_dir_2 = "outputs/data/"
+        self.label_dir_1 = os.path.join(kitti_root, "training", "label_2")
+        
         self.calib_dir = os.path.join(kitti_root, "training", "calib")
         self.lidar_dir = os.path.join(kitti_root, "training", "velodyne")
         self.radar_dir = os.path.join(kitti_root, "training", "radar")
-        self.label_dir = os.path.join(kitti_root, "training", "label_2")
-        self.pred_path = pred_path
         
         image_files = [] 
-        for label_name in os.listdir(self.label_dir) if self.pred_path is None else os.listdir(self.pred_path):
+        for label_name in os.listdir(self.label_dir_2):
+            if not os.path.exists(os.path.join(self.label_dir_1, label_name)): continue
             base_name = label_name.split('.')[0]
             image_files.append(base_name + ".jpg")
             
@@ -311,94 +391,147 @@ class KITTIDataset:
     def __len__(self):
         return self.num_samples
     
-    def load_calib(self, idx):
-        file_name = self.label_files[idx]
-        with open(os.path.join(self.calib_dir, file_name), 'r') as csv_file:
+    def load_calib_kitti(self, idx):
+        calib_file = os.path.join(self.calib_dir, self.label_files[idx])
+        with open(calib_file, 'r') as csv_file:
             reader = csv.reader(csv_file, delimiter=' ')
-            P2, Tr_velo_to_cam, Tr_radar_to_velo = None, None, None
+            P2, R0_rect, Tr_velo2cam = None, None, None
             for line, row in enumerate(reader):
+                if row[0] == 'P1:':
+                    P1 = row[1:]
+                    P1 = [float(i) for i in P1]
+                    P1 = np.array(P1, dtype=np.float32).reshape(3, 4)
+                    continue
                 if row[0] == 'P2:':
                     P2 = row[1:]
                     P2 = [float(i) for i in P2]
                     P2 = np.array(P2, dtype=np.float32).reshape(3, 4)
                     continue
+                if row[0] == 'P3:':
+                    P3 = row[1:]
+                    P3 = [float(i) for i in P3]
+                    P3 = np.array(P3, dtype=np.float32).reshape(3, 4)
+                    continue
+                elif row[0] == 'R0_rect:':
+                    R0_rect = row[1:]
+                    R0_rect = [float(i) for i in R0_rect]
+                    R0_rect = np.array(R0_rect, dtype=np.float32).reshape(3, 3)
+                    continue
+                elif row[0] == 'Tr_velo_to_cam1:':
+                    Tr_velo2cam1 = row[1:]
+                    Tr_velo2cam1 = [float(i) for i in Tr_velo2cam1]
+                    Tr_velo2cam1 = np.array(Tr_velo2cam1, dtype=np.float32).reshape(3, 4)
+                    continue
                 elif row[0] == 'Tr_velo_to_cam:':
-                    Tr_velo_to_cam = row[1:]
-                    Tr_velo_to_cam = [float(i) for i in Tr_velo_to_cam]
-                    Tr_velo_to_cam = np.array(Tr_velo_to_cam, dtype=np.float32).reshape(3, 4)
+                    Tr_velo2cam2 = row[1:]
+                    Tr_velo2cam2 = [float(i) for i in Tr_velo2cam2]
+                    Tr_velo2cam2 = np.array(Tr_velo2cam2, dtype=np.float32).reshape(3, 4)
                     continue
-                elif row[0] == 'Tr_radar_to_velo:':
-                    Tr_radar_to_velo = row[1:]
-                    Tr_radar_to_velo = [float(i) for i in Tr_radar_to_velo]
-                    Tr_radar_to_velo = np.array(Tr_radar_to_velo, dtype=np.float32).reshape(3, 4)
+                elif row[0] == 'Tr_velo_to_cam3:':
+                    Tr_velo2cam3 = row[1:]
+                    Tr_velo2cam3 = [float(i) for i in Tr_velo2cam3]
+                    Tr_velo2cam3 = np.array(Tr_velo2cam3, dtype=np.float32).reshape(3, 4)
                     continue
-        return P2, Tr_velo_to_cam, Tr_radar_to_velo     
+            if R0_rect is not None:
+                Tr_velo2cam1 = np.matmul(R0_rect, Tr_velo2cam1)
+                Tr_velo2cam2 = np.matmul(R0_rect, Tr_velo2cam2)
+                Tr_velo2cam3 = np.matmul(R0_rect, Tr_velo2cam3)
+            sensor_params = {
+                "CAM_LEFT": (P1, Tr_velo2cam1[:3, :3], Tr_velo2cam1[:3, 3]),
+                "CAM_FRONT": (P2, Tr_velo2cam2[:3, :3], Tr_velo2cam2[:3, 3]), 
+                "CAM_RIGHT": (P3, Tr_velo2cam3[:3, :3], Tr_velo2cam3[:3, 3])
+            }
+        return sensor_params
     
-    def load_annotations(self, idx, pred=False):
-        annotations = []
+    def load_annotations(self, idx, label_dir):
         file_name = self.label_files[idx]
-        file_name = os.path.join(self.label_dir, file_name) if not pred else os.path.join(self.pred_path, file_name)
+        label_path = os.path.join(label_dir, file_name)
+        P, r_velo2cam, t_velo2cam = self.load_calib_kitti(idx)["CAM_FRONT"]
+        r_cam2velo, t_cam2velo = cam2velo(r_velo2cam, t_velo2cam)
+        Tr_cam2velo = np.eye(4)
+        Tr_cam2velo[:3, :3], Tr_cam2velo[:3, 3] = r_cam2velo, t_cam2velo
         fieldnames = ['type', 'truncated', 'occluded', 'alpha', 'xmin', 'ymin', 'xmax', 'ymax', 'dh', 'dw',
-                      'dl', 'lx', 'ly', 'lz', 'ry']
-        with open(file_name, 'r') as csv_file:
+                        'dl', 'lx', 'ly', 'lz', 'ry']
+        annos = []
+        with open(label_path, 'r') as csv_file:
             reader = csv.DictReader(csv_file, delimiter=' ', fieldnames=fieldnames)
             for line, row in enumerate(reader):
-                annotations.append({
-                    "class": row["type"],
-                    "label": row["type"],
-                    "truncated": float(row["truncated"]),
-                    "occluded": float(row["occluded"]),
-                    "alpha": float(row["alpha"]),
-                    "dim": [float(row['dh']), float(row['dw']), float(row['dl'])],
-                    "loc": [float(row['lx']), float(row['ly']), float(row['lz'])],
-                    "rot_y": float(row["ry"])
-                })
-        return annotations
+                alpha = float(row["alpha"])
+                pos = np.array((float(row['lx']), float(row['ly']), float(row['lz'])), dtype=np.float32)
+                ry = float(row["ry"])
+                if alpha > np.pi:
+                    alpha -= 2 * np.pi
+                    ry = alpha2roty(alpha, pos)
+                alpha = clip2pi(alpha)
+                ry = clip2pi(ry)
+                rot_y = -0.5 * np.pi - ry
+                dim = [float(row['dl']), float(row['dw']), float(row['dh'])]
+                truncated_state = float(row["truncated"])
+                occluded_state = float(row["occluded"])
+                loc_cam = np.array([float(row['lx']), float(row['ly']), float(row['lz']), 1.0]).reshape(4, 1)
+                loc_lidar = np.matmul(Tr_cam2velo, loc_cam).squeeze(-1)[:3]
+                loc_lidar[2] += 0.5 * float(row['dh'])
+                anno = {"dim": dim, 
+                        "loc": loc_lidar, 
+                        "rot_y": rot_y, 
+                        "class": row["type"], 
+                        "label": row["type"],
+                        "alpha": alpha, 
+                        "truncated": truncated_state, 
+                        "occluded": occluded_state}
+                annos.append(anno)
+        return annos
+    
+    def bbox2image_visual(self, image, sensor_params, annos, cam="CAM_FRONT"):
+        P, r_velo2cam, t_velo2cam = sensor_params[cam]
+        image = bbox2image_projection(image, annos, r_velo2cam, t_velo2cam, P[:3,:3])
+        return image
     
     def __getitem__(self, idx):
         # load default parameter here
         original_idx = self.label_files[idx].replace(".txt", "")
-                
-        P2, Tr_velo_to_cam, Tr_radar_to_velo = self.load_calib(idx)
-        image = cv2.imread(os.path.join(self.image_dir, self.image_files[idx]))
-        image = cv2.resize(image, (1536, 864))
-        points_rslidar = read_bin(os.path.join(self.lidar_dir, self.lidar_files[idx]))
-        radar_file = os.path.join(self.radar_dir, self.radar_files[idx])
-        points_radar = read_radar_bin(radar_file) if os.path.exists(radar_file) else None
+        annos = self.load_annotations(idx, self.label_dir_2)
+        sensor_params = self.load_calib_kitti(idx)
+
+        image1 = cv2.imread(os.path.join(self.image_1_dir, self.image_files[idx]))
+        image2 = cv2.imread(os.path.join(self.image_2_dir, self.image_files[idx]))
+        image3 = cv2.imread(os.path.join(self.image_3_dir, self.image_files[idx]))
         
-        P2[:3, :3] = P2[:3, :3] * 0.8
-        P2[2, 2] = 1.0
+        image1 = self.bbox2image_visual(image1, sensor_params, annos, cam="CAM_LEFT")
+        image2 = self.bbox2image_visual(image2, sensor_params, annos, cam="CAM_FRONT")
+        image3 = self.bbox2image_visual(image3, sensor_params, annos, cam="CAM_RIGHT")
+        image = np.hstack((image1, image2, image3))
+    
+        P, r_velo2cam, t_velo2cam = sensor_params["CAM_FRONT"]
         sensor_params = {
-            "rmat": Tr_velo_to_cam[:3, :3],
-            "tvec": Tr_velo_to_cam[:3, 3],
-            "K": P2[:3, :3],
+            "rmat": r_velo2cam,
+            "tvec": t_velo2cam,
+            "K": P[:3, :3],
             "dist": np.array([0.0, 0.0,	0.0, 0.0, 0.0]),
         }
-        denorm = get_denorm(Tr_velo_to_cam)
-        image = lidar2camera_projection(image, points_rslidar, sensor_params)
+        Tr_velo2cam = np.eye(4)
+        Tr_velo2cam[:3,:3] = r_velo2cam
+        Tr_velo2cam[:3,3] = t_velo2cam
+        points_rslidar = read_bin(os.path.join(self.lidar_dir, self.lidar_files[idx]))
+        bev_image_1 = get_bev_image(points_rslidar, c=(225, 225, 225), r=1)
+        bev_image_1 = bbox2lidar_projection(bev_image_1, annos, (255, 0, 0))
+        bev_image_1 = bev_image_1[:int(0.55*bev_image_1.shape[0]),:,:]
         
-        annos = self.load_annotations(idx)
-        image = bbox2image_projection(image, annos, P2, denorm, c=(0,0,255))
-        bev_image = get_bev_image(points_rslidar, c=(255, 0, 0), r=2)
-        if points_radar is not None:
-            points_radar_extend = np.concatenate((points_radar, np.ones((points_radar.shape[0], 1))), axis=1)
-            radar2lidar = np.eye(4)
-            radar2lidar[:3, :4] = Tr_radar_to_velo
-            points_radar_rslidar = np.matmul(radar2lidar, points_radar_extend.T).T[:, :3]
-            bev_image_radar = get_bev_image(points_radar_rslidar, c=(0, 0, 255), r=3)
-            bev_image = cv2.addWeighted(bev_image_radar, 0.5, bev_image, 0.5, 0)
-        bev_image = bbox2lidar_projection(bev_image, annos, sensor_params, denorm, c=(0,0,255))
-
-        if self.pred_path is not None:
-            annos_pred = self.load_annotations(idx, pred=True)
-            image = bbox2image_projection(image, annos_pred, P2, denorm)
-            bev_image = bbox2lidar_projection(bev_image, annos_pred, sensor_params, denorm)
+        bev_image_2 = get_bev_image(points_rslidar, c=(225, 225, 225), r=1)
+        annos = self.load_annotations(idx, self.label_dir_1)
+        bev_image_2 = bbox2lidar_projection(bev_image_2, annos, (0, 255, 0))
+        bev_image_2 = bev_image_2[:int(0.55*bev_image_2.shape[0]),:,:]
         
+        bev_image = np.hstack((bev_image_2, bev_image_1))
+        
+        image = cv2.resize(image, (bev_image.shape[1], int(image.shape[0] * (bev_image.shape[1] / image.shape[1]))))
+        image = np.vstack((image, bev_image))
+        print(bev_image.shape, image.shape)
         return image, bev_image, original_idx
 
 if __name__ == "__main__":
     args = parse_option()
-    dataset = KITTIDataset(args.kitti_root, args.pred_path)
+    dataset = KITTIDataset(args.kitti_root)
     os.makedirs(args.demo_path, exist_ok=True)
     
     for i in range(len(dataset)):

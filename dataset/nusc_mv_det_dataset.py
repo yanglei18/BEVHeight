@@ -524,7 +524,7 @@ class NuscMVDetDataset(Dataset):
                         cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 data_augmentation = False
-                if self.is_train and random.random() < 0.5 and self.is_img_aug():
+                if self.is_train and random.random() < 0.5 and self.is_img_aug() and False:
                     data_augmentation = True
                     intrin_mat, sweepego2sweepsensor, ratio, roll, transform_pitch = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
                     img = img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat.numpy())
