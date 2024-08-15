@@ -225,7 +225,7 @@ def main():
     train_infos = generate_info_kitti(kitti_root, split='train')
     val_infos = generate_info_kitti(kitti_root, split='val')
     test_infos = generate_info_kitti(kitti_root, split='test')
-
+    
     with open(os.path.join(kitti_root, prefix + "_12hz_infos_train.pkl"), 'wb') as fid:        
         pickle.dump(train_infos, fid)
     with open(os.path.join(kitti_root, prefix + "_12hz_infos_val.pkl"), 'wb') as fid:        

@@ -191,7 +191,7 @@ def generate_info_kitti(kitti_root, split='train'):
             category_name = anno["name"]
             translation = anno["loc"]
             
-            if translation[2] > -5 and translation[2] < 3:
+            if translation[2] > -2 and translation[2] < 3:
                 valid_count += 1
             total_count += 1 
             min_h = min(min_h, translation[2])
@@ -219,7 +219,7 @@ def generate_info_kitti(kitti_root, split='train'):
             ann_infos.append(ann_info)
         info['ann_infos'] = ann_infos
         infos.append(info)
-    print(total_count, valid_count, valid_count/total_count)
+    print(total_count, valid_count, valid_count/total_count, min_h, max_h)
     return infos
 
 def main():
@@ -233,10 +233,10 @@ def main():
     prefix = kitti_root.split('/')[1]
     train_infos = generate_info_kitti(kitti_root, split='train')
     val_infos = generate_info_kitti(kitti_root, split='val')
-    with open(os.path.join(kitti_root, prefix + "_12hz_infos_train.pkl"), 'wb') as fid:        
-        pickle.dump(train_infos, fid)
-    with open(os.path.join(kitti_root, prefix + "_12hz_infos_val.pkl"), 'wb') as fid:        
-        pickle.dump(val_infos, fid)
+    # with open(os.path.join(kitti_root, prefix + "_12hz_infos_train.pkl"), 'wb') as fid:        
+    #     pickle.dump(train_infos, fid)
+    # with open(os.path.join(kitti_root, prefix + "_12hz_infos_val.pkl"), 'wb') as fid:        
+    #     pickle.dump(val_infos, fid)
 
 if __name__ == '__main__':
     main()

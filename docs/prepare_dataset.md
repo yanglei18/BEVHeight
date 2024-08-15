@@ -23,12 +23,54 @@ Download KITTI-360 dataset from official [website](https://www.cvlibs.net/datase
 ## Waymo
 Download Waymo dataset from official [website](https://waymo.com/open/download/).
 
-Convert Waymo to KITTI format
+Set up environment
+```
+# Decompress the Waymo zip files into their corresponding directories
+ls *.tar | xargs -i tar xvf {} -C your_target_dir
+# Set up environment
+conda create -n py36_waymo_tf python=3.7
+conda activate py36_waymo_tf
+conda install cudatoolkit=11.3 -c pytorch
+# Newer versions of tf are not in conda. tf>=2.4.0 is compatible with conda.
+pip install tensorflow-gpu==2.4
+conda install pandas
+pip3 install waymo-open-dataset-tf-2-4-0 --user
+```
+
+Parse Waymo dataset 
+```
+ln -s [waymo root] ./data/waymo/raw_data
+conda activate py36_waymo_tf
+python scripts/data_converter/converter.py --load_dir data/waymo --save_dir data/waymo/parse_data --split training   --num_proc 10
+python scripts/data_converter/converter.py --load_dir data/waymo --save_dir data/waymo/parse_data --split validation   --num_proc 10
+```
+
+Convert Waymo dataset parsed to KITTI format
+```
+python scripts/data_converter/waymo2kitti.py --source-root data/waymo/parse_data --target-root data/waymo-kitti
+```
 
 BEVHeight
 ├── data
 │   ├── waymo
-│   │   ├── train
+│   │   ├── ImageSets
+│   │   │   ├── train_tfrecord.txt
+│   │   │   ├── val_tfrecord.txt
+│   │   ├── raw_data
+│   │   │   ├── training
+│   │   │   │   ├── segment-10017090168044687777_6380_000_6400_000_with_camera_labels.tfrecord
+│   │   │   ├── validation
+│   │   │   │   ├── segment-10203656353524179475_7625_000_7645_000_with_camera_labels.tfrecord
+│   │   ├── parse_data
+│   │   │   ├── training_org
+│   │   │   │   ├── segment-id
+│   │   │   ├── validation_org
+│   │   │   │   ├── segment-id
+│   │   ├── waymo_train_org.txt
+│   │   ├── waymo_val_org.txt
+│   ├── waymo-kitti
+│   │   ├── ImageSets
+│   │   ├── training
 │   │   ├── validation
 
 

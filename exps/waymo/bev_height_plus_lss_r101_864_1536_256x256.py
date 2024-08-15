@@ -29,7 +29,7 @@ img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 to_rgb=True)
 model_type = 2 # 0: BEVDepth, 1: BEVHeight, 2: BEVHeight++
 
-return_depth = True
+return_depth = False
 data_root = "data/waymo-kitti/"
 gt_label_path = "data/waymo-kitti/validation/label_2"
 bev_dim = 160 if model_type==2 else 80
@@ -535,7 +535,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=35,
+        max_epochs=30,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,

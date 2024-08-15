@@ -524,7 +524,7 @@ class NuscMVDetDataset(Dataset):
                         cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 data_augmentation = False
-                if self.is_train and random.random() < 0.5 and self.is_img_aug() and False:
+                if self.is_train and random.random() < 0.5 and self.is_img_aug():
                     data_augmentation = True
                     intrin_mat, sweepego2sweepsensor, ratio, roll, transform_pitch = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
                     img = img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat.numpy())
@@ -571,9 +571,13 @@ class NuscMVDetDataset(Dataset):
 
                 if self.return_depth and sweep_idx == 0:
                     lidar_path = lidar_infos[sweep_idx]['LIDAR_TOP']['filename']
-                    lidar_points = np.fromfile(os.path.join(self.data_root, lidar_path),
-                                               dtype=np.float32,
-                                               count=-1).reshape(-1, 4)[..., :4]
+                    if os.path.exists(os.path.join(self.data_root, lidar_path)):
+                        lidar_points = np.fromfile(os.path.join(self.data_root, lidar_path),
+                                                dtype=np.float32,
+                                                count=-1).reshape(-1, 4)[..., :4]
+                    else:
+                        lidar_points = np.ones((1000, 4))
+                        
                     pts_img, depth, mask = self.get_lidar_depth(
                         lidar_points.copy(), img,
                         lidar_infos[sweep_idx], cam_info[cam])
