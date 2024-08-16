@@ -21,17 +21,17 @@ from models.bev_height import BEVHeight
 from utils.torch_dist import all_gather_object, get_rank, synchronize
 from utils.backup_files import backup_codebase
 
-H = 384
-W = 1280
+H = 1280
+W = 1920
 final_dim = (384, 1280)
 img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 img_std=[58.395, 57.12, 57.375],
                 to_rgb=True)
-model_type = 0 # 0: BEVDepth, 1: BEVHeight, 2: BEVHeight++
+model_type = 1 # 0: BEVDepth, 1: BEVHeight, 2: BEVHeight++
 
 return_depth = True
-data_root = "data/kitti-360/"
-gt_label_path = "data/kitti-360/training/label_2"
+data_root = "data/waymo-kitti/"
+gt_label_path = "data/waymo-kitti/training/label_2"
 bev_dim = 160 if model_type==2 else 80
  
 backbone_conf = {
@@ -462,7 +462,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'kitti-360_12hz_infos_train.pkl'),
+            info_path=os.path.join(data_root, 'waymo-kitti_12hz_infos_trainval.pkl'),
             is_train=True,
             use_cbgs=self.data_use_cbgs,
             img_conf=self.img_conf,
@@ -490,7 +490,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'kitti-360_12hz_infos_val.pkl'),
+            info_path=os.path.join(data_root, 'waymo-kitti_12hz_infos_val.pkl'),
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,
@@ -524,14 +524,14 @@ def main(args: Namespace) -> None:
     print(args)
     
     model = BEVHeightLightningModel(**vars(args))
-    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_depth_lss_r101_384_1280_256x256/checkpoints', filename='{epoch}', every_n_epochs=5, save_last=True, save_top_k=-1)
+    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_height_lss_r101_384_1280_256x256/checkpoints', filename='{epoch}', every_n_epochs=5, save_last=True, save_top_k=-1)
     trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback])
     if args.evaluate:
         for ckpt_name in os.listdir(args.ckpt_path):
             model_pth = os.path.join(args.ckpt_path, ckpt_name)
             trainer.test(model, ckpt_path=model_pth)
     else:
-        backup_codebase(os.path.join('./outputs/bev_depth_lss_r101_384_1280_256x256', 'backup'))
+        backup_codebase(os.path.join('./outputs/bev_height_lss_r101_384_1280_256x256', 'backup'))
         '''
         if os.path.exists("pretrain_ckpt/bevheight_plus_pretrain_car.ckpt"):
             model = BEVHeightLightningModel.load_from_checkpoint("pretrain_ckpt/bevheight_plus_pretrain_car.ckpt")
@@ -564,7 +564,7 @@ def run_cli():
         limit_val_batches=0,
         enable_checkpointing=True,
         precision=32,
-        default_root_dir='./outputs/bev_depth_lss_r101_384_1280_256x256')
+        default_root_dir='./outputs/bev_height_lss_r101_384_1280_256x256')
     args = parser.parse_args()
     main(args)
 

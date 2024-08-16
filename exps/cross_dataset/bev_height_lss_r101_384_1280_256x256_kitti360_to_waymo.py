@@ -21,8 +21,8 @@ from models.bev_height import BEVHeight
 from utils.torch_dist import all_gather_object, get_rank, synchronize
 from utils.backup_files import backup_codebase
 
-H = 384
-W = 1280
+H = 1280
+W = 1920
 final_dim = (384, 1280)
 img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 img_std=[58.395, 57.12, 57.375],
@@ -30,8 +30,8 @@ img_conf = dict(img_mean=[123.675, 116.28, 103.53],
 model_type = 0 # 0: BEVDepth, 1: BEVHeight, 2: BEVHeight++
 
 return_depth = True
-data_root = "data/kitti-360/"
-gt_label_path = "data/kitti-360/training/label_2"
+data_root = "data/waymo-kitti/"
+gt_label_path = "data/waymo-kitti/training/label_2"
 bev_dim = 160 if model_type==2 else 80
  
 backbone_conf = {
@@ -462,7 +462,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'kitti-360_12hz_infos_train.pkl'),
+            info_path=os.path.join(data_root, 'waymo-kitti_12hz_infos_train.pkl'),
             is_train=True,
             use_cbgs=self.data_use_cbgs,
             img_conf=self.img_conf,
@@ -490,7 +490,7 @@ class BEVHeightLightningModel(LightningModule):
             ida_aug_conf=self.ida_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=os.path.join(data_root, 'kitti-360_12hz_infos_val.pkl'),
+            info_path=os.path.join(data_root, 'waymo-kitti_12hz_infos_val.pkl'),
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,
